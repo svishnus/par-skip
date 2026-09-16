@@ -1,5 +1,6 @@
 # Metric skip lists on ParlayLib (header-only). Targets:
 #   make test        build + run all tests
+#   make test-all    tests with the default scheduler, one worker, SEQ=1 and DEBUG=1
 #   make bench       build benchmarks
 #   make SEQ=1 ...   compile with PARLAY_SEQUENTIAL (single-threaded, easier debugging)
 #   make DEBUG=1 ... -O0 -g with ASan/UBSan
@@ -31,7 +32,7 @@ BENCHES := $(patsubst bench/%.cpp,$(BUILD)/bench/%,$(wildcard bench/*.cpp))
 COMPDB_SRCS := $(wildcard tests/*.cpp bench/*.cpp)
 COMPDB      := compile_commands.json
 
-.PHONY: all test bench clean compile_commands
+.PHONY: all test test-all bench clean compile_commands
 all: $(COMPDB) $(TESTS) $(BENCHES)
 
 compile_commands: $(COMPDB)
@@ -60,6 +61,13 @@ $(BUILD)/tests $(BUILD)/bench:
 
 test: $(COMPDB) $(TESTS)
 	@status=0; for t in $(TESTS); do echo "== $$t"; $$t || status=1; done; exit $$status
+
+# Same tests under every scheduler configuration that must agree bit for bit.
+test-all:
+	$(MAKE) test
+	@status=0; for t in $(TESTS); do echo "== PARLAY_NUM_THREADS=1 $$t"; PARLAY_NUM_THREADS=1 $$t || status=1; done; exit $$status
+	$(MAKE) SEQ=1 BUILD=$(BUILD)/seq test
+	$(MAKE) DEBUG=1 BUILD=$(BUILD)/debug test
 
 bench: $(COMPDB) $(BENCHES)
 
