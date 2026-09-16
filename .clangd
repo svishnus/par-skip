@@ -1,0 +1,6 @@
+# clangd picks up flags from compile_commands.json (run `make compile_commands`,
+# also refreshed by every `make`). This file only tunes diagnostics.
+CompileFlags:
+  Compiler: clang++
+Diagnostics:
+  Suppress: [deprecated-builtins]   # emitted inside ParlayLib's type_traits.h

@@ -1,0 +1,10 @@
+# build outputs
+build/
+*.o
+*.dSYM/
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+compile_commands.json
