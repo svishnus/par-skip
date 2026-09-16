@@ -80,9 +80,10 @@ struct FingerLists {
   const idx_t* adv_begin(idx_t k) const { return adv.data() + slot(k, 0); }
   idx_t* adv_begin(idx_t k) { return adv.data() + slot(k, 0); }
 
-  // F_i(r): index of the first list with radius <= r, by binary search over
-  // the non-increasing radius array. The last list is empty with radius 0, so
-  // the result is valid for every r >= 0.
+  // F_i(r): index of the first list with radius <= r (the paper's Table 2
+  // and Alg. 2; its Sec. 3.3 text says "last", which is a slip), by binary
+  // search over the non-increasing radius array. The last list is empty with
+  // radius 0, so the result is valid for every r >= 0.
   idx_t locate(dist_t r) const {
     assert(!radius.empty() && r >= 0);
     auto it = std::partition_point(radius.begin(), radius.end(), [r](dist_t x) { return x > r; });
@@ -129,7 +130,8 @@ struct FingerLists {
   // at all, appends just the empty list.
   void build_tail() {
     if (num_lists() == 0) {
-      push_back(nullptr, 0);
+      static constexpr Entry none{0, 0};
+      push_back(&none, 0);
       return;
     }
     idx_t sz = size.back();

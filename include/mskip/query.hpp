@@ -3,7 +3,7 @@
 #pragma once
 
 #include <algorithm>
-#include <cassert>
+#include <stdexcept>
 
 #include <parlay/primitives.h>
 #include <parlay/sequence.h>
@@ -14,7 +14,10 @@
 namespace mskip {
 namespace detail {
 
-// K = {m}, the closest point seen so far (ties: highest priority).
+// K = {m}, the closest point seen so far (ties: highest priority). Alg. 3
+// uses thr = d(cur, q); the walk's thr = max(d(m, q), d(cur, q)) is the same
+// because d(m, q) <= d(cur, q) throughout (m only gets closer, and outward
+// hops go to points no closer than the threshold).
 struct NearestPolicy {
   idx_t m;
   dist_t dm;
@@ -84,7 +87,7 @@ void MetricSkipList<Metric>::query_range(const point_type& q, dist_t delta, parl
 
 template <class Metric>
 idx_t MetricSkipList<Metric>::nearest(const point_type& q) const {
-  assert(n_ > 0);
+  if (n_ == 0) throw std::out_of_range("mskip: nearest() on an empty structure");
   return perm_[advance_ ? query_nearest<AdvanceNav>(q) : query_nearest<BinarySearchNav>(q)];
 }
 

@@ -44,10 +44,11 @@ void MetricSkipList<Metric>::build_parallel(size_t seq_base, bool advance) {
 template <class Metric>
 void MetricSkipList<Metric>::parallel_build(idx_t l, idx_t r) {
   if (static_cast<size_t>(r - l) + 1 <= seq_base_) {
-    WorkerCounters& c = counters_[parlay::worker_id()];
     for (idx_t i = r + 1; i-- > l;) {
-      c.steps += build_point(i, r, i + 1);
-      c.walks++;
+      const size_t steps = build_point(i, r, i + 1);
+      WorkerCounters& c = counters();
+      c.steps += steps;
+      c.walks += steps > 0;
     }
     return;
   }
@@ -64,9 +65,12 @@ template <class Metric>
 void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
   const size_t cnt = static_cast<size_t>(m - l) + 1;
   auto nodes = parlay::delayed_tabulate(cnt, [l](size_t t) { return static_cast<idx_t>(l + t); });
-  auto frontier = parlay::filter(nodes, [&](idx_t i) { return C_[i] == i; });
-  auto nonroots = parlay::filter(nodes, [&](idx_t i) { return C_[i] != i; });
-  auto keyed = parlay::delayed_map(nonroots, [&](idx_t i) { return std::pair<idx_t, idx_t>(C_[i] - l, i); });
+  auto frontier = parlay::filter(nodes, [&](idx_t i) { return control_[i] == i; });
+  auto nonroots = parlay::filter(nodes, [&](idx_t i) { return control_[i] != i; });
+  auto keyed = parlay::delayed_map(nonroots, [&](idx_t i) { return std::pair<idx_t, idx_t>(control_[i] - l, i); });
+  // The roots are exactly the points without a complete list, i.e. the last
+  // min(alpha, cnt) points of the left half.
+  assert(frontier.size() <= alpha_);
   auto sorted = parlay::counting_sort_by_keys(keyed, cnt);
   const parlay::sequence<idx_t>& children = sorted.first;  // grouped by parent
   const parlay::sequence<size_t>& offsets = sorted.second;
@@ -74,9 +78,10 @@ void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
   while (!frontier.empty()) {
     depth++;
     parlay::parallel_for(0, frontier.size(), [&](size_t t) {
-      WorkerCounters& c = counters_[parlay::worker_id()];
-      c.steps += resume(frontier[t], m, r);
-      c.walks++;
+      const size_t steps = resume(frontier[t], m, r);
+      WorkerCounters& c = counters();
+      c.steps += steps;
+      c.walks += steps > 0;
     }, 1);
     frontier = parlay::flatten(parlay::map(frontier, [&](idx_t f) {
       return children.cut(offsets[f - l], offsets[f - l + 1]);
@@ -86,7 +91,7 @@ void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
     const bool final = r == n_ - 1;
     parlay::parallel_for(0, cnt, [&](size_t t) { fixup(static_cast<idx_t>(l + t), final); });
   }
-  WorkerCounters& c = counters_[parlay::worker_id()];
+  WorkerCounters& c = counters();
   c.merges++;
   c.layers += depth;
   c.max_depth = std::max(c.max_depth, depth);
@@ -99,18 +104,19 @@ void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
 // them are deferred (settled_from = m + 1).
 template <class Metric>
 size_t MetricSkipList<Metric>::resume(idx_t i, idx_t m, idx_t r) {
-  if (C_[i] == i) return build_point(i, r, m + 1);
+  if (control_[i] == i) return build_point(i, r, m + 1);
   FingerLists& F = lists_[i];
   F.truncate_tail();
+  assert(F.num_complete() > 0);
   if (!advance_) {
     BuildPolicy K{*this, i, F, m + 1, true, nullptr};
     BinarySearchNav nav;
-    return random_walk(*this, pts_[i], K, C_[i], nav);
+    return random_walk(*this, pts_[i], K, control_[i], nav);
   }
   BuildPolicy K{*this, i, F, m + 1, r == n_ - 1, &pending_[i]};
-  AdvanceNav nav{K_[i]};  // the focus list where the walk was blocked
-  const size_t steps = random_walk(*this, pts_[i], K, C_[i], nav);
-  WorkerCounters& c = counters_[parlay::worker_id()];
+  AdvanceNav nav{control_list_[i]};  // the focus list where the walk was blocked
+  const size_t steps = random_walk(*this, pts_[i], K, control_[i], nav);
+  WorkerCounters& c = counters();
   c.focus_moves += nav.moves;
   c.pointer_moves += K.moves;
   return steps;
@@ -148,7 +154,7 @@ void MetricSkipList<Metric>::fixup(idx_t i, bool final) {
     if (!final && p >= Fj.num_complete()) pend[w++] = s;
   }
   pend.resize(w);
-  counters_[parlay::worker_id()].pointer_moves += moves;
+  counters().pointer_moves += moves;
 }
 
 }  // namespace mskip

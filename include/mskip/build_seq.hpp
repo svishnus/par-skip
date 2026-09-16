@@ -72,8 +72,8 @@ struct MetricSkipList<Metric>::BuildPolicy {
   }
 
   void stop(idx_t cur, idx_t k) {
-    S.C_[i] = cur;
-    S.K_[i] = k;
+    S.control_[i] = cur;
+    S.control_list_[i] = k;
     F.build_tail();
   }
 };
@@ -91,8 +91,8 @@ void MetricSkipList<Metric>::provisional(idx_t i, idx_t r) {
     F.push_back(buf, t);
   }
   F.build_tail();
-  C_[i] = i;
-  K_[i] = 0;
+  control_[i] = i;
+  control_list_[i] = 0;
   if (advance_) pending_[i].clear();
 }
 
@@ -121,7 +121,7 @@ size_t MetricSkipList<Metric>::build_point(idx_t i, idx_t r, idx_t settled_from)
   for (idx_t e = 0; e < alpha_; e++) adv0[e] = K.settle(buf[e].idx, 0, F.radius[0], F.slot(0, e));
   AdvanceNav nav;  // k = 0: the first list of s_cur
   const size_t steps = random_walk(*this, pts_[i], K, i + alpha_, nav);
-  WorkerCounters& c = counters_[parlay::worker_id()];
+  WorkerCounters& c = counters();
   c.focus_moves += nav.moves;
   c.pointer_moves += K.moves;
   return steps;
@@ -136,8 +136,8 @@ void MetricSkipList<Metric>::reset(bool advance) {
   if (advance && pending_.size() != n_) pending_ = parlay::sequence<parlay::sequence<uint32_t>>(n_);
   parlay::parallel_for(0, n_, [&](size_t i) {
     lists_[i] = FingerLists(alpha_, advance);
-    C_[i] = static_cast<idx_t>(i);
-    K_[i] = 0;
+    control_[i] = static_cast<idx_t>(i);
+    control_list_[i] = 0;
     if (advance) pending_[i].clear();
   });
 }
@@ -158,10 +158,11 @@ void MetricSkipList<Metric>::finish_stats() {
 template <class Metric>
 void MetricSkipList<Metric>::build_sequential(bool advance) {
   reset(advance);
-  WorkerCounters& c = counters_[parlay::worker_id()];
   for (idx_t i = n_; i-- > 0;) {
-    c.steps += build_point(i, n_ - 1, i + 1);
-    c.walks++;
+    const size_t steps = build_point(i, n_ - 1, i + 1);
+    WorkerCounters& c = counters();
+    c.steps += steps;
+    c.walks += steps > 0;
   }
   finish_stats();
 }
