@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 #include <parlay/primitives.h>
@@ -33,6 +34,8 @@ template <class Metric>
 class MetricSkipList {
  public:
   using point_type = typename Metric::point_type;
+  static_assert(std::is_same_v<decltype(Metric::slack), const dist_t>,
+                "Metric needs `static constexpr dist_t slack` (see metric.hpp)");
 
   // Shuffles pts with `seed` (parlay::random_permutation, deterministic for a
   // given seed regardless of the number of workers) and keeps the permutation.
@@ -72,6 +75,7 @@ class MetricSkipList {
   const point_type& point(idx_t i) const { return pts_[i]; }  // s_i
   dist_t dist(idx_t i, idx_t j) const { return metric_(pts_[i], pts_[j]); }
   dist_t dist_to(idx_t i, const point_type& q) const { return metric_(pts_[i], q); }
+  dist_t radius_slack() const { return 1 + Metric::slack; }  // factor on every search radius
   const parlay::sequence<idx_t>& permutation() const { return perm_; }
   const FingerLists& lists(idx_t i) const { return lists_[i]; }
   // Control point C[i]: where the walk that built F_i stopped (i itself when

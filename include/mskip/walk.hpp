@@ -62,7 +62,10 @@ struct AdvanceNav {
 //
 // Invariant: K is exact for the prefix of the permutation up to cur, and nxt
 // is chosen so that no point strictly between cur and nxt could improve K.
-// Returns the number of iterations.
+// The search ball is enlarged by the metric's slack so that the argument
+// holds for the computed distances. Every hop goes to an entry with a larger
+// index than cur, so the walk ends after at most n iterations whatever the
+// metric does. Returns the number of iterations.
 template <class Metric, class Policy, class Nav>
 size_t random_walk(const MetricSkipList<Metric>& S, const typename Metric::point_type& q, Policy& K,
                    idx_t cur, Nav& nav) {
@@ -71,7 +74,7 @@ size_t random_walk(const MetricSkipList<Metric>& S, const typename Metric::point
     const FingerLists& F = S.lists(cur);
     const dist_t dc = S.dist_to(cur, q);
     const dist_t thr = std::max(K.radius(), dc);  // "improves K or is closer than cur"
-    const idx_t k = nav.focus(F, dc + thr);       // any such point lies within dc + thr of cur
+    const idx_t k = nav.focus(F, (dc + thr) * S.radius_slack());  // any such point lies within dc + thr of cur
     const Entry* L = F.begin(k);
     const idx_t sz = F.size[k];
     idx_t e = 0;

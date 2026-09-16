@@ -10,8 +10,10 @@ namespace mskip {
 using idx_t = uint32_t;
 
 // Distances. All three builders (reference, sequential, parallel) evaluate the
-// same metric on the same points, so the structure is a deterministic function
-// of the permutation regardless of floating-point rounding.
+// same metric on the same points in the same orientation, so within one
+// binary the structure is a deterministic function of the permutation. Across
+// compilers or flags (e.g. FP contraction) the computed distances, and hence
+// the structure, may differ.
 using dist_t = float;
 
 }  // namespace mskip
