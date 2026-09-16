@@ -11,7 +11,7 @@
 
 using namespace mskip;
 
-template <int D>
+template <size_t D>
 struct Build {
   static void run(const bench::Args& args) {
     const size_t n = args.num("-n", 100000);
@@ -61,6 +61,6 @@ struct Build {
 
 int main(int argc, char** argv) {
   bench::Args args{argc, argv};
-  bench::dispatch_dim<Build>(static_cast<int>(args.num("-d", 2)), args);
+  bench::dispatch_dim<Build>(static_cast<size_t>(args.num("-d", 2)), args);
   return 0;
 }

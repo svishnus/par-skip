@@ -41,7 +41,7 @@ struct Args {
 };
 
 // uniform | clusters (20 Gaussian clusters, sigma = 0.01) | grid (side 64)
-template <int D>
+template <size_t D>
 parlay::sequence<mskip::Point<D>> dataset(const std::string& name, size_t n, uint64_t seed) {
   if (name == "uniform") return mskip::data::uniform<D>(n, seed);
   if (name == "clusters") return mskip::data::gaussian_clusters<D>(n, 20, 0.01, seed);
@@ -51,8 +51,8 @@ parlay::sequence<mskip::Point<D>> dataset(const std::string& name, size_t n, uin
 }
 
 // Runs f<D>() for the requested dimension.
-template <template <int> class F, class... A>
-void dispatch_dim(int d, A&&... a) {
+template <template <size_t> class F, class... A>
+void dispatch_dim(size_t d, A&&... a) {
   switch (d) {
     case 2: F<2>::run(std::forward<A>(a)...); break;
     case 3: F<3>::run(std::forward<A>(a)...); break;
@@ -61,8 +61,8 @@ void dispatch_dim(int d, A&&... a) {
   }
 }
 
-inline void print_header(const char* what, size_t n, unsigned alpha, int d, const std::string& data) {
-  std::printf("%s: n=%zu alpha=%u D=%d data=%s workers=%zu\n", what, n, alpha, d, data.c_str(),
+inline void print_header(const char* what, size_t n, unsigned alpha, size_t d, const std::string& data) {
+  std::printf("%s: n=%zu alpha=%u D=%zu data=%s workers=%zu\n", what, n, alpha, d, data.c_str(),
               parlay::num_workers());
 }
 

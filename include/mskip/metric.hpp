@@ -20,6 +20,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cmath>
 #include <limits>
 
@@ -27,7 +28,7 @@
 
 namespace mskip {
 
-template <int D>
+template <size_t D>
 using Point = std::array<dist_t, D>;
 
 constexpr dist_t kEps = std::numeric_limits<dist_t>::epsilon();
@@ -41,13 +42,13 @@ constexpr dist_t kEps = std::numeric_limits<dist_t>::epsilon();
 // factor of 2 in reserve.
 constexpr dist_t kFloatSlack = 4 * kEps;
 
-template <int D>
+template <size_t D>
 struct L2 {
   using point_type = Point<D>;
   static constexpr dist_t slack = kFloatSlack;
   dist_t operator()(const point_type& a, const point_type& b) const {
     double s = 0;
-    for (int k = 0; k < D; k++) {
+    for (size_t k = 0; k < D; k++) {
       const double d = static_cast<double>(a[k]) - b[k];
       s += d * d;
     }
@@ -55,24 +56,24 @@ struct L2 {
   }
 };
 
-template <int D>
+template <size_t D>
 struct L1 {
   using point_type = Point<D>;
   static constexpr dist_t slack = kFloatSlack;
   dist_t operator()(const point_type& a, const point_type& b) const {
     double s = 0;
-    for (int k = 0; k < D; k++) s += std::fabs(static_cast<double>(a[k]) - b[k]);
+    for (size_t k = 0; k < D; k++) s += std::fabs(static_cast<double>(a[k]) - b[k]);
     return static_cast<dist_t>(s);
   }
 };
 
-template <int D>
+template <size_t D>
 struct Linf {
   using point_type = Point<D>;
   static constexpr dist_t slack = kFloatSlack;
   dist_t operator()(const point_type& a, const point_type& b) const {
     double m = 0;
-    for (int k = 0; k < D; k++) m = std::max(m, std::fabs(static_cast<double>(a[k]) - b[k]));
+    for (size_t k = 0; k < D; k++) m = std::max(m, std::fabs(static_cast<double>(a[k]) - b[k]));
     return static_cast<dist_t>(m);
   }
 };
