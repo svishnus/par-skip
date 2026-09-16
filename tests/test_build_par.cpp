@@ -61,6 +61,25 @@ int main() {
     run<L1<2>>("grid L1 2D (ties)", data::grid<2>(300, 5, 1), alpha, 1, true);
     run<L2<2>>("duplicates x4", data::with_duplicates<2>(data::uniform<2>(100, 2), 4), alpha, 2, true);
   }
+  run<L2<2>>("empty", data::uniform<2>(0, 0), 4, 0, true);
+  run<L2<2>>("all identical", parlay::sequence<Point<2>>(300, Point<2>{0.25f, 0.75f}), 4, 11, true);
+  run<L1<1>>("1D integers (ties)", data::grid<1>(500, 7, 12), 4, 12, true);
+  {
+    // rebuilding in place (any mode after any mode) gives the same structure
+    auto pts = data::uniform<2>(3000, 13);
+    MetricSkipList<L2<2>> S(pts, 4, L2<2>(), 13);
+    MetricSkipList<L2<2>> fresh(pts, 4, L2<2>(), 13);
+    fresh.build_sequential(true);
+    S.build_parallel(0, false);
+    S.build_sequential(false);
+    S.build_parallel(7, true);
+    S.build_sequential(true);
+    S.build_parallel(0, true);
+    bool same = S.control() == fresh.control() && S.control_list() == fresh.control_list();
+    for (idx_t i = 0; same && i < S.n(); i++) same = same_lists(S.lists(i), fresh.lists(i), true);
+    CHECK_CTX(same, "rebuild in place differs from a fresh build");
+    CHECK(check::check_advance(S, "rebuild"));
+  }
   run<L2<2>>("uniform L2 2D", data::uniform<2>(100000, 3), 4, 3);
   run<L2<3>>("uniform L2 3D", data::uniform<3>(30000, 4), 8, 4);
   run<Linf<8>>("uniform Linf 8D", data::uniform<8>(20000, 5), 4, 5);

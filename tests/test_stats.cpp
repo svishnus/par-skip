@@ -1,6 +1,7 @@
 // Sanity bounds on the structure and the walks (loose, not proofs):
 // lists per point ~ alpha * H_n, walk length ~ log n, control-forest depth
-// ~ log n.
+// ~ log n. The inputs and permutations are seeded, so the bounds are
+// deterministic here; they are whp statements for random permutations.
 #include <cmath>
 #include <cstdio>
 

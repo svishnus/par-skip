@@ -34,6 +34,8 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
     for (dist_t r : probes) {
       const idx_t k = F.locate(r);
       CHECK(k < F.num_lists() && F.radius[k] <= r && (k == 0 || F.radius[k - 1] > r));
+      const idx_t from = static_cast<idx_t>(rng.ith_rand(i + 7919 * static_cast<size_t>(r * 1e6)) % F.num_lists());
+      CHECK_CTX(F.align(from, r) == k, "%s i=%u: align(%u, %g) != locate", name, i, from, static_cast<double>(r));
       auto want = ball_prefix(S, i, r);
       bool same = want.size() == F.size[k];
       for (idx_t e = 0; same && e < F.size[k]; e++) same = F.begin(k)[e].idx == want[e];

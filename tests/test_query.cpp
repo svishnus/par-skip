@@ -1,5 +1,6 @@
 // nearest / knn / range against brute force: random queries, queries equal
 // to data points, k >= n, delta = 0, and inputs with many ties.
+#include <cmath>
 #include <cstdio>
 #include <limits>
 
@@ -32,7 +33,7 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
       CHECK_CTX(false, "%s query %zu: nearest %u (d=%g) vs brute %u (d=%g)", what, t, got,
                 double(S.dist_to(got, q)), nn[0].idx, double(nn[0].dist));
     }
-    for (idx_t k : {idx_t(1), idx_t(2), idx_t(5), idx_t(n), idx_t(n + 3)}) {
+    for (idx_t k : {idx_t(0), idx_t(1), idx_t(2), idx_t(5), idx_t(n), idx_t(n + 3)}) {
       auto want = brute_knn(S, q, k);
       auto res = S.knn(q, k);
       bool same = res.size() == want.size();
@@ -67,7 +68,35 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
   run<Metric>(name, pts, alpha, queries, seed, true);
 }
 
+// Computed float L2 distances can violate the triangle inequality by an ulp:
+// here d(a,c) > 2 d(a,b) although d(b,c) < d(a,b). Without the metric's
+// slack on the search radius, the walk from a would look in a ball that
+// excludes c, stop at a's empty tail list, and report a as the nearest
+// neighbor of b; the sequential build of (b, a, c) would also miss c as an
+// evictor of b's first list. Found by the Phase 2 review.
+static void fp_triangle_regression() {
+  const Point<2> a{0.0410199612f, 0.216252118f}, b{0.640225053f, 0.749455512f}, c{1.23943007f, 1.28265893f};
+  L2<2> d;
+  CHECK(d(a, c) > d(a, b) + d(b, c));  // the premise of the test; skip silently otherwise
+  if (!(d(a, c) > d(a, b) + d(b, c))) return;
+  for (idx_t alpha : {1u, 2u}) {
+    MetricSkipList<L2<2>> S(parlay::sequence<Point<2>>{a, c}, alpha, parlay::sequence<idx_t>{0, 1});
+    for (bool advance : {false, true}) {
+      S.build_sequential(advance);
+      CHECK_CTX(S.nearest(b) == 1, "alpha=%u advance=%d: nearest(b) is not c", alpha, int(advance));
+      CHECK_CTX(S.knn(b, 1) == parlay::sequence<idx_t>{1}, "alpha=%u advance=%d: knn", alpha, int(advance));
+      CHECK_CTX(S.range(b, std::nextafter(d(b, c), 1.0f)) == parlay::sequence<idx_t>{1}, "alpha=%u: range", alpha);
+    }
+    MetricSkipList<L2<2>> T(parlay::sequence<Point<2>>{b, a, c}, alpha, parlay::sequence<idx_t>{0, 1, 2});
+    T.build_sequential(false);
+    CHECK_CTX(check::matches_reference(T, "fp triangle (b, a, c)"), "alpha=%u", alpha);
+    T.build_parallel(0, true);
+    CHECK_CTX(check::matches_reference(T, "fp triangle (b, a, c) parallel"), "alpha=%u", alpha);
+  }
+}
+
 int main() {
+  fp_triangle_regression();
   for (idx_t alpha : {1u, 2u, 4u, 8u}) {
     for (size_t n : {size_t(1), size_t(2), size_t(alpha + 1), size_t(37), size_t(1000)}) {
       auto pts = data::uniform<2>(n, n);
