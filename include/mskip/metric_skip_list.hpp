@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include <parlay/primitives.h>
 #include <parlay/random.h>
@@ -44,7 +45,10 @@ class MetricSkipList {
   }
 
   void build_sequential();  // Alg. 2: F_{n-1} down to F_0, one random walk each
-  void build_parallel();    // Alg. 6: divide and conquer with the control forest
+  // Alg. 6: divide and conquer with the control forest. Ranges of at most
+  // seq_base points (never fewer than alpha) form the sequential base case.
+  void build_parallel(size_t seq_base = kDefaultSeqBase);
+  static constexpr size_t kDefaultSeqBase = 1024;
 
   idx_t nearest(const point_type& q) const;                              // original index
   parlay::sequence<idx_t> knn(const point_type& q, idx_t k) const;       // by distance, ties by priority
@@ -68,9 +72,13 @@ class MetricSkipList {
   struct BuildPolicy;  // build_seq.hpp
   size_t build_point(idx_t i, idx_t r);
   void provisional(idx_t i, idx_t r);
-  void parallel_build(idx_t l, idx_t r);
+  void parallel_build(idx_t l, idx_t r);  // build_par.hpp
   void merge(idx_t l, idx_t m, idx_t r);
   size_t resume(idx_t i, idx_t r);
+
+  struct alignas(64) WorkerCounters {  // per-worker BuildStats, summed at the end
+    size_t walks = 0, steps = 0, merges = 0, layers = 0, max_depth = 0;
+  };
 
   Metric metric_;
   idx_t alpha_;
@@ -80,6 +88,8 @@ class MetricSkipList {
   parlay::sequence<FingerLists> lists_;
   parlay::sequence<idx_t> C_, K_;
   BuildStats stats_;
+  std::vector<WorkerCounters> counters_;
+  size_t seq_base_ = kDefaultSeqBase;
 };
 
 }  // namespace mskip
@@ -87,3 +97,4 @@ class MetricSkipList {
 #include "mskip/walk.hpp"
 #include "mskip/build_seq.hpp"
 #include "mskip/query.hpp"
+#include "mskip/build_par.hpp"
