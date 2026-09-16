@@ -51,8 +51,11 @@ A metric is any type with `point_type`,
 `static constexpr dist_t slack` bounding how far its *computed* distances can
 break the triangle inequality (rounding); the walks enlarge their search
 balls by `1 + slack`, which is all the exactness argument needs. `L2`, `L1`,
-`Linf` over `std::array<float, D>` are provided in `metric.hpp`; use 0 for
-exact metrics. Distances must be finite, non-negative and symmetric.
+`Linf` over `std::array<float, D>` are provided in `metric.hpp`; they
+accumulate in double and round once, so a slack of 4 ulps covers every float
+input (subnormal squares would otherwise break the bound). Use 0 for exact
+metrics. Distances must be finite, non-negative and symmetric, and queries
+before a build throw.
 `MetricSkipList` throws `std::invalid_argument` for `alpha` outside
 `[1, 255]`, and a second constructor takes an explicit permutation. The size
 and time bounds assume a random permutation, so pass a seed the input cannot
@@ -131,6 +134,11 @@ Notes from the measurements (details in `docs/PLAN.md` §9):
 * With α ≤ 8 the walks are far longer than log n in 3D and 8D: the analysis
   needs α ≥ 16c³ with c ≈ 2^D. Queries stay exact; only the cost bound is
   lost.
+* The same happens for a query far from all the data: with `-data clusters`
+  (20 tight Gaussian clusters) and uniform query points, a nearest-neighbor
+  query takes ≈ 200 µs instead of 0.4 µs, because the search ball of radius
+  2·d(cur, q) contains whole clusters and every step is an outward hop. The
+  expansion-rate assumption is about the data *and* the queries.
 
 ### Editor support (clangd)
 

@@ -2,7 +2,10 @@
 // parallel over a structure built with build_parallel().
 //   bench_query -n 1000000 -alpha 4 -d 2 -data uniform -q 100000 -k 10 [-adv 1]
 // -adv 1 builds advance pointers and queries with Alg. 4; -adv 0 uses binary
-// search (Alg. 3).
+// search (Alg. 3). Queries are drawn from the same generator as the data, so
+// with -data clusters most queries fall far from every cluster: that measures
+// the regime where the expansion assumption fails around the query and the
+// walk degenerates to outward hops (hundreds of microseconds per query).
 #include <cstdio>
 
 #include <parlay/parallel.h>

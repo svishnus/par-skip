@@ -51,8 +51,10 @@ structures, which is the main correctness test.
    declares `static constexpr dist_t slack` with
    `d(a, c) <= (d(a, b) + d(b, c)) * (1 + slack)` for computed values, and the
    walk multiplies every search radius by `1 + slack` (a larger ball keeps the
-   argument valid; see section 3). `L2`/`L1`: `(2D + 8) eps`; `Linf`: `8 eps`;
-   exact metrics: 0.
+   argument valid; see section 3). A slack is relative, so it has to hold at
+   every magnitude: the built-in metrics accumulate in double and round once
+   to float (no subnormal squares), which makes `4 eps` enough with a factor
+   of two to spare; exact metrics use 0.
 
 ---
 
@@ -322,9 +324,14 @@ Why this is sound (worth keeping in mind while coding):
   from `r` down to `l` leaves every `F_i` complete w.r.t. `r` and `C[i]` at
   the same stop point), it only skips the per-merge overhead. Tests run with
   `seq_base` = 0 (pure D&C down to `alpha`), 7 and the default.
-* Lengths of `F_j` never shrink during the build (a resume truncates at most
-  the tail and rebuilds one of at least the same length), so any list index
-  recorded earlier — `K[i]`, an advance pointer — is still a valid index.
+* Any list index recorded earlier — `K[i]`, an advance pointer — is still a
+  valid index whenever it is read: no `F_j` is read while it is rebuilt (a
+  point rebuilt from provisional is a root of the merge's forest, roots read
+  only right-half lists, and everything else reads it in a later layer or
+  after the layers), and every rebuild ends with at least as many lists as
+  before (a resume truncates only the tail and rebuilds one of the same
+  length; a provisional point with `t + 1 ≤ alpha` lists gets `≥ alpha + 1`
+  lists or `≥ t + 1` provisional ones). Asserted in `resume` and in `align`.
 
 ParlayLib pieces: `parlay::par_do`, `parlay::parallel_for`,
 `parlay::counting_sort_by_keys` (the control forest as CSR),
@@ -348,10 +355,10 @@ structure, the control points and the walk length stay identical to the
 sequential Alg. 5) and settles pointers as follows.
 
 Invariant: every stored pointer is a valid index into its target's list array
-(lengths never shrink), and `align` from any valid index is correct on the
-current lists. So a pointer is only ever a *hint* while its target is not
-final; correctness needs only that every pointer is `align`ed once more after
-its target's last change.
+whenever it is read (see the bullet on recorded indices above), and `align`
+from any valid index is correct on the current lists. So a pointer is only
+ever a *hint* while its target is not final; correctness needs only that
+every pointer is `align`ed once more after its target's last change.
 
 During a resumed walk of `i` in `merge(l, m, r)` (`BuildPolicy::settle`):
 
@@ -366,11 +373,16 @@ During a resumed walk of `i` in `merge(l, m, r)` (`BuildPolicy::settle`):
 
 After the last layer of the merge, `fixup(i)` runs in parallel over
 `i ∈ [l, m]`: each pending slot is re-`align`ed (from the previous list's
-pointer for the same target when there is one — the push-down — so a chain of
-deferred copies costs O(distance + length), not O(distance × length)); slots
-that resolve to a complete list, or any slot when `r == n-1`, leave the pending
-list. After the top-level merge every pointer equals `F_j.locate(radius)`
-(tested: bit-identical to the sequential Alg. 5 build).
+pointer for the same target when there is one — the push-down; entry `e` of
+list `k` is entry `e` or `e+1` of list `k-1` unless it is the evictor — so a
+chain of deferred copies costs O(distance + length), not
+O(distance × length)); slots that resolve to a complete list, or any slot when
+`r == n-1`, leave the pending list. Pending slots stay in creation (= slot)
+order, so the previous list's pointer has been fixed when a slot is reached.
+After the top-level merge every pointer equals `F_j.locate(radius)` (tested:
+bit-identical to the sequential Alg. 5 build over 1350 small configurations
+and the large inputs of `test_build_par`; `BuildStats` counts deferred,
+re-aligned and still-pending slots so the test can assert the paths ran).
 
 Cost: a pending slot is touched once per level at which its owner is in a left
 half, i.e. O(log n) times at most, each time for O(1) + moves; measured pointer
