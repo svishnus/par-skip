@@ -438,7 +438,7 @@ shuffles with `parlay::random_permutation(seed)`.
 | 2 | done | G, test_build_par, bench | `feat(par): divide-and-conquer construction with control forest`, `test(par): parallel build matches sequential`, `bench: construction and query benchmarks` |
 | 3 | done | advance/align, sequential (Alg. 4/5) | `feat(core): advance pointers and align` |
 | 4 | done | advance/align, parallel (section 6.1; the arXiv full version's Alg. 7 was consulted) | `feat(par): maintain advance pointers in parallel build` |
-| 5 | open | tuning: α sweep, memory compaction, cache layout | `perf: ...` |
+| 5 | started | tuning: per-point reservation of the list arrays (done: resident set 3.3× → 1.9× logical, 1e6 build 2.0 → 1.2 s), α sweep, layout compaction, cache layout | `perf: reserve per-point list arrays for the expected list count`, `perf: ...` |
 
 Two independent review rounds (after Phase 2 and after Phase 4) produced the
 `fix(core)` rounding-slack and double-accumulation commits, the `fix(api)`
