@@ -1,15 +1,17 @@
 <svg xmlns='http://www.w3.org/2000/svg' width='760' height='440' viewBox='0 0 760 440' font-family='-apple-system, Segoe UI, Helvetica, Arial, sans-serif' font-size='13'>
 <rect width='760' height='440' fill='#fcfcfb'/>
 <text x='16' y='26' font-size='16' font-weight='600' fill='#0b0b0b'>Speedup over the sequential build</text>
-<text x='16' y='45' fill='#52514e'>n = 1M, α = 4; sequential Alg. 2 takes 20.9 s</text>
+<text x='16' y='45' fill='#52514e'>n = 1M, α = 4; sequential Alg. 2 takes 20.4 s</text>
 <line x1='64' x2='550' y1='384.0' y2='384.0' stroke='#e6e5e1'/>
 <text x='56' y='388.0' text-anchor='end' fill='#52514e' font-size='12'>0</text>
-<line x1='64' x2='550' y1='290.6' y2='290.6' stroke='#e6e5e1'/>
-<text x='56' y='294.6' text-anchor='end' fill='#52514e' font-size='12'>5</text>
-<line x1='64' x2='550' y1='197.2' y2='197.2' stroke='#e6e5e1'/>
-<text x='56' y='201.2' text-anchor='end' fill='#52514e' font-size='12'>10</text>
-<line x1='64' x2='550' y1='103.8' y2='103.8' stroke='#e6e5e1'/>
-<text x='56' y='107.8' text-anchor='end' fill='#52514e' font-size='12'>15</text>
+<line x1='64' x2='550' y1='307.0' y2='307.0' stroke='#e6e5e1'/>
+<text x='56' y='311.0' text-anchor='end' fill='#52514e' font-size='12'>5</text>
+<line x1='64' x2='550' y1='230.1' y2='230.1' stroke='#e6e5e1'/>
+<text x='56' y='234.1' text-anchor='end' fill='#52514e' font-size='12'>10</text>
+<line x1='64' x2='550' y1='153.1' y2='153.1' stroke='#e6e5e1'/>
+<text x='56' y='157.1' text-anchor='end' fill='#52514e' font-size='12'>15</text>
+<line x1='64' x2='550' y1='76.2' y2='76.2' stroke='#e6e5e1'/>
+<text x='56' y='80.2' text-anchor='end' fill='#52514e' font-size='12'>20</text>
 <line x1='64.0' x2='64.0' y1='70' y2='384' stroke='#e6e5e1'/>
 <text x='64.0' y='402' text-anchor='middle' fill='#52514e' font-size='12'>1</text>
 <line x1='101.4' x2='101.4' y1='70' y2='384' stroke='#e6e5e1'/>
@@ -22,28 +24,28 @@
 <text x='550.0' y='402' text-anchor='middle' fill='#52514e' font-size='12'>14</text>
 <text x='307' y='426' text-anchor='middle' fill='#52514e'>workers</text>
 <text transform='translate(18,227) rotate(-90)' text-anchor='middle' fill='#52514e'>speedup</text>
-<path d='M64.0,349.9 L101.4,322.9 L176.2,267.3 L325.7,189.4 L550.0,93.3' fill='none' stroke='#2a78d6' stroke-width='2' stroke-linejoin='round'/>
-<circle cx='64.0' cy='349.9' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='101.4' cy='322.9' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='176.2' cy='267.3' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='325.7' cy='189.4' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
+<path d='M64.0,352.6 L101.4,325.7 L176.2,273.4 L325.7,177.1 L550.0,93.3' fill='none' stroke='#2a78d6' stroke-width='2' stroke-linejoin='round'/>
+<circle cx='64.0' cy='352.6' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='101.4' cy='325.7' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='176.2' cy='273.4' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='325.7' cy='177.1' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
 <circle cx='550.0' cy='93.3' r='4' fill='#2a78d6' stroke='#fcfcfb' stroke-width='2'/>
 <line x1='556.0' x2='560' y1='93.3' y2='93.3' stroke='#e6e5e1'/>
-<text x='564' y='97.3' fill='#0b0b0b' font-size='12'>binary search <tspan fill='#52514e'>15.6</tspan></text>
-<path d='M64.0,365.3 L101.4,346.6 L176.2,309.3 L325.7,234.6 L550.0,122.5' fill='none' stroke='#52514e' stroke-width='2' stroke-dasharray='6,5' stroke-linejoin='round'/>
-<circle cx='64.0' cy='365.3' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='101.4' cy='346.6' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='176.2' cy='309.3' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='325.7' cy='234.6' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='550.0' cy='122.5' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
-<line x1='556.0' x2='560' y1='122.5' y2='122.5' stroke='#e6e5e1'/>
-<text x='564' y='126.5' fill='#0b0b0b' font-size='12'>ideal <tspan fill='#52514e'>14</tspan></text>
-<path d='M64.0,357.8 L101.4,335.6 L176.2,295.5 L325.7,232.0 L550.0,178.6' fill='none' stroke='#eb6834' stroke-width='2' stroke-linejoin='round'/>
-<circle cx='64.0' cy='357.8' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='101.4' cy='335.6' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='176.2' cy='295.5' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='325.7' cy='232.0' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
-<circle cx='550.0' cy='178.6' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
-<line x1='556.0' x2='560' y1='178.6' y2='178.6' stroke='#e6e5e1'/>
-<text x='564' y='182.6' fill='#0b0b0b' font-size='12'>advance pointers <tspan fill='#52514e'>11.0</tspan></text>
+<text x='564' y='97.3' fill='#0b0b0b' font-size='12'>binary search <tspan fill='#52514e'>18.9</tspan></text>
+<path d='M64.0,355.9 L101.4,331.9 L176.2,288.9 L325.7,208.5 L550.0,147.1' fill='none' stroke='#eb6834' stroke-width='2' stroke-linejoin='round'/>
+<circle cx='64.0' cy='355.9' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='101.4' cy='331.9' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='176.2' cy='288.9' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='325.7' cy='208.5' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='550.0' cy='147.1' r='4' fill='#eb6834' stroke='#fcfcfb' stroke-width='2'/>
+<line x1='556.0' x2='560' y1='147.1' y2='147.1' stroke='#e6e5e1'/>
+<text x='564' y='151.1' fill='#0b0b0b' font-size='12'>advance pointers <tspan fill='#52514e'>15.4</tspan></text>
+<path d='M64.0,368.6 L101.4,353.2 L176.2,322.4 L325.7,260.9 L550.0,168.5' fill='none' stroke='#52514e' stroke-width='2' stroke-dasharray='6,5' stroke-linejoin='round'/>
+<circle cx='64.0' cy='368.6' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='101.4' cy='353.2' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='176.2' cy='322.4' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='325.7' cy='260.9' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
+<circle cx='550.0' cy='168.5' r='4' fill='#52514e' stroke='#fcfcfb' stroke-width='2'/>
+<line x1='556.0' x2='560' y1='168.5' y2='168.5' stroke='#e6e5e1'/>
+<text x='564' y='172.5' fill='#0b0b0b' font-size='12'>ideal <tspan fill='#52514e'>14</tspan></text>
 </svg>

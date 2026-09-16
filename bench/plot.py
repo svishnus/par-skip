@@ -27,6 +27,7 @@ MILESTONES = [  # key, label, color (categorical slots 1-4; the sequential basel
     ("p4-advance-pointers", "+ advance pointers", "#eb6834"),
     ("p4b-review-fixes", "+ review fixes", "#1baf7a"),
     ("p5-reserved-arrays", "+ reserved list arrays", "#eda100"),
+    ("p5b-compact-lists", "+ compact list storage", "#e87ba4"),
 ]
 BASELINE = ("p1-sequential-Alg2", "sequential build (Alg. 2)", "#52514e")
 
@@ -190,10 +191,16 @@ for metric, name in (("nearest_per_second", "nearest neighbor"), ("knn10_per_sec
     if bars: q.append((name, bars))
 bar_chart(os.path.join(OUT, "queries.svg"), "Query throughput", "n = 1M, α = 4, 100k queries answered in parallel on 14 workers", q, "M queries/s")
 
-# 4. peak memory per point at n = 1M, per milestone
-mem = []
+# 4. memory per point at n = 1M, per milestone: peak resident set, and the
+# logical size of the lists where recorded
+mem, logical = [], []
 for k, lab, col in MILESTONES:
     v = rows[(k, "rss_bytes")].get(1e6)
     if v: mem.append((lab, col, v / 1e6 / 1024))
-bar_chart(os.path.join(OUT, "memory.svg"), "Peak resident memory per point during the parallel build",
-          "n = 1M, α = 4 (≈ 50 lists per point); the advance pointers add 4 bytes per list entry", [("", mem)], "KB")
+    v = rows[(k, "logical_bytes")].get(1e6)
+    if v and k != "p4-advance-pointers":  # that milestone's bench left the pointers out of the size
+        logical.append((lab, col, v / 1e6 / 1024))
+groups = [("peak resident set", mem)]
+if logical: groups.append(("finger lists, logical size", logical))
+bar_chart(os.path.join(OUT, "memory.svg"), "Memory per point, parallel build with advance pointers",
+          "n = 1M, α = 4 (≈ 50 lists per point)", groups, "KB")

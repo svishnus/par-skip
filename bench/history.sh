@@ -1,6 +1,8 @@
 #!/bin/sh
 # Measures every milestone of the implementation with the same benchmark and
-# writes bench/results/history.csv (milestone,n,metric,value), then the
+# writes bench/results/history.csv (milestone,n,metric,value: build seconds,
+# peak resident set, lists per point, logical bytes of the lists, query
+# throughput), then the
 # thread scaling and the query modes of the current tree. bench/plot.py turns
 # the CSV into docs/plots/*.svg.
 #
@@ -25,9 +27,13 @@ p1-sequential-Alg2:8f3c960:0
 p2-parallel-Alg6:8f3c960:0
 p4-advance-pointers:1c49d72:1
 p4b-review-fixes:a357189:1
-p5-reserved-arrays:HEAD:1
+p5-reserved-arrays:80a1c15:1
+p5b-compact-lists:HEAD:1
 "
 
+# Milestones up to p5-reserved-arrays print the logical size; later ones also
+# print the allocated size, and their bench_build takes -stride.
+#
 # Runs a command under /usr/bin/time, writing its output plus the peak
 # resident set to $log (macOS -l or GNU -v).
 timed() {
@@ -57,6 +63,7 @@ for m in $MILESTONES; do
     fi
     echo "$label,$n,rss_bytes,$rss" >> "$OUT"
     lists=$(awk '/^ *structure/ {print $2}' "$log"); echo "$label,$n,lists_per_point,$lists" >> "$OUT"
+    mb=$(awk '/^ *structure/ {print $4}' "$log"); echo "$label,$n,logical_bytes,$(awk "BEGIN {print $mb * 1048576}")" >> "$OUT"
     if [ "$n" = 1000000 ]; then
       # shellcheck disable=SC2086
       "$wt/build/bench/bench_query" -n "$n" -alpha 4 -d 2 -q 100000 -k 10 $advflag > "$log.q"
