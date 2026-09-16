@@ -145,11 +145,32 @@ struct FingerLists {
     }
   }
 
+  // Reserves room for about `lists` lists, so a build that stays within it
+  // never reallocates (parlay::sequence grows by 2.5x and its allocator
+  // keeps the freed buffers, which more than doubled the footprint before
+  // this). ParlayLib's pool hands out power-of-two blocks and touches them,
+  // and every sequence buffer starts with a capacity header, so the entry
+  // array, which dominates, is sized to fill the block nearest to the
+  // request (in log scale) exactly; the other arrays follow that list count.
+  void reserve(size_t lists) {
+    constexpr size_t header = 16;  // parlay::sequence's in-buffer header, upper bound
+    const size_t want = header + std::max<size_t>(lists, 1) * alpha * sizeof(Entry);
+    size_t block = 32;
+    while (block < want) block <<= 1;
+    if (want * want < block * (block / 2)) block /= 2;  // want closer to block/2 than to block
+    lists = std::max<size_t>((block - header) / (alpha * sizeof(Entry)), 1);
+    radius.reserve(lists);
+    size.reserve(lists);
+    entries.reserve(lists * alpha);
+    if (has_adv) adv.reserve(lists * alpha);
+  }
+
+  // Empties the lists but keeps the capacity (parlay::sequence::clear frees).
   void clear() {
-    radius.clear();
-    size.clear();
-    entries.clear();
-    adv.clear();
+    radius.resize(0);
+    size.resize(0);
+    entries.resize(0);
+    adv.resize(0);
     n_complete = 0;
   }
 

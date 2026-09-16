@@ -77,6 +77,7 @@ class MetricSkipList {
   // alpha) form the sequential base case.
   void build_parallel(size_t seq_base = kDefaultSeqBase, bool advance = true);
   static constexpr size_t kDefaultSeqBase = 1024;
+  static constexpr double kReserveFactor = 1.25;  // list arrays reserved per point, see reset()
   bool built() const { return built_; }          // queries throw std::logic_error before a build
   bool has_advance() const { return advance_; }  // queries then use Alg. 4
   size_t unresolved() const {                    // advance pointers not yet exact; 0 after a build
