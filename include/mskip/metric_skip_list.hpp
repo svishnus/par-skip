@@ -1,6 +1,7 @@
 // The metric skip list: a random permutation of the points plus the finger
 // lists of every point. This header holds the class shell; the algorithms
-// are member functions defined in walk.hpp and build_seq.hpp, which are included at the end.
+// are member functions defined in walk.hpp, build_seq.hpp, query.hpp and
+// build_par.hpp, which are included at the end.
 #pragma once
 
 #include <cassert>
@@ -45,6 +46,10 @@ class MetricSkipList {
   void build_sequential();  // Alg. 2: F_{n-1} down to F_0, one random walk each
   void build_parallel();    // Alg. 6: divide and conquer with the control forest
 
+  idx_t nearest(const point_type& q) const;                              // original index
+  parlay::sequence<idx_t> knn(const point_type& q, idx_t k) const;       // by distance, ties by priority
+  parlay::sequence<idx_t> range(const point_type& q, dist_t delta) const;  // open ball d < delta
+
   idx_t n() const { return n_; }
   idx_t alpha() const { return alpha_; }
   const Metric& metric() const { return metric_; }
@@ -81,3 +86,4 @@ class MetricSkipList {
 
 #include "mskip/walk.hpp"
 #include "mskip/build_seq.hpp"
+#include "mskip/query.hpp"
