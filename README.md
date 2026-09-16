@@ -1,5 +1,7 @@
 # Parallel Metric Skip Lists and Nearest Neighbor Search
 
+[![ci](https://github.com/svishnus/par-skip/actions/workflows/ci.yml/badge.svg)](https://github.com/svishnus/par-skip/actions/workflows/ci.yml)
+
 A C++17 / [ParlayLib](https://github.com/cmuparlay/parlaylib) implementation
 of the metric skip list and its parallel construction from
 
