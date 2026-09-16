@@ -440,6 +440,11 @@ shuffles with `parlay::random_permutation(seed)`.
 | 4 | done | advance/align, parallel (section 6.1; the arXiv full version's Alg. 7 was consulted) | `feat(par): maintain advance pointers in parallel build` |
 | 5 | open | tuning: α sweep, memory compaction, cache layout | `perf: ...` |
 
+Two independent review rounds (after Phase 2 and after Phase 4) produced the
+`fix(core)` rounding-slack and double-accumulation commits, the `fix(api)`
+run-time checks, the Makefile `override`/`TSAN=1` change, the adversarial
+and stress tests, and the `refactor(par)` of `fixup`.
+
 Phase 5 notes from the measurements so far: the walk length is Θ(α ln n)
 (every evictor is visited: ≈ 46 of 77 steps per point at n = 4·10⁵, α = 4),
 and the time per step doubles from n = 2.5·10⁴ to 4·10⁵ because the

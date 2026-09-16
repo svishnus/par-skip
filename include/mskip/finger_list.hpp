@@ -54,7 +54,7 @@ inline idx_t farthest(const Entry* first, idx_t sz) {
 struct FingerLists {
   idx_t alpha = 0;
   idx_t n_complete = 0;
-  bool has_adv = false;  // advance pointers are maintained (Phase 3)
+  bool has_adv = false;  // advance pointers are maintained (Alg. 4/5)
   parlay::sequence<dist_t> radius;   // max dist in list k, 0 if empty; non-increasing
   parlay::sequence<uint8_t> size;    // size[k] <= alpha
   parlay::sequence<Entry> entries;   // alpha-stride; padding slots are zero
