@@ -4,7 +4,8 @@
 # Threads: $THREADS (default "1 2 4 8 14"), or the machine's core count.
 set -e
 cd "$(dirname "$0")/.."
-make -s bench
+BUILD=${BUILD:-build}
+make -s BUILD="$BUILD" bench
 for t in ${THREADS:-1 2 4 8 14}; do
-  PARLAY_NUM_THREADS=$t build/bench/bench_build -seq 0 -rounds 2 "$@" | sed "s/^/[$t threads] /"
+  PARLAY_NUM_THREADS=$t "$BUILD"/bench/bench_build -seq 0 -rounds 2 "$@" | sed "s/^/[$t threads] /"
 done
