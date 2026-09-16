@@ -22,6 +22,12 @@
 
 namespace mskip {
 
+// A query result: the original index of a point and its distance to the query.
+struct Neighbor {
+  idx_t index;
+  dist_t dist;
+};
+
 // Counters kept by the builders (docs/PLAN.md section 6, "instrumentation").
 struct BuildStats {
   size_t walks = 0;          // random walks run (resumes count again; provisional points do not)
@@ -68,6 +74,9 @@ class MetricSkipList {
     init(std::move(pts));
   }
 
+  // Builds the structure; the same as build_parallel(). Rebuilding is
+  // allowed and replaces the previous structure.
+  void build() { build_parallel(); }
   // Alg. 5 (advance = true: focus lists found with advance pointers and
   // align, and the pointers are stored) or Alg. 2 (binary search, no
   // pointers): F_{n-1} down to F_0, one random walk each.
@@ -86,11 +95,18 @@ class MetricSkipList {
     return total;
   }
 
-  // Results are original indices (into the pts passed to the constructor).
-  // Ties: the closest point of highest priority (lowest permutation index).
-  idx_t nearest(const point_type& q) const;                               // throws std::out_of_range if n == 0
-  parlay::sequence<idx_t> knn(const point_type& q, idx_t k) const;        // by distance, then priority
+  // Queries. Results are original indices (into the pts passed to the
+  // constructor), or Neighbor{index, distance} from the _dist variants.
+  // Exact for any alpha; ties go to the closest point of highest priority
+  // (lowest permutation index). Queries are const and may run concurrently
+  // (e.g. inside parlay::parallel_for) once a build has finished; they throw
+  // std::logic_error before a build.
+  idx_t nearest(const point_type& q) const;     // throws std::out_of_range if n == 0
+  Neighbor nearest_dist(const point_type& q) const;
+  parlay::sequence<idx_t> knn(const point_type& q, idx_t k) const;  // min(k, n) results by distance, then priority
+  parlay::sequence<Neighbor> knn_dist(const point_type& q, idx_t k) const;
   parlay::sequence<idx_t> range(const point_type& q, dist_t delta) const;  // open ball d < delta, discovery order
+  parlay::sequence<Neighbor> range_dist(const point_type& q, dist_t delta) const;
 
   idx_t n() const { return n_; }
   idx_t alpha() const { return alpha_; }
@@ -107,6 +123,15 @@ class MetricSkipList {
   const parlay::sequence<idx_t>& control() const { return control_; }
   const parlay::sequence<idx_t>& control_list() const { return control_list_; }
   const BuildStats& stats() const { return stats_; }
+  // Bytes held by the finger lists (logical size; capacity is up to twice
+  // that, see FingerLists::reserve).
+  size_t memory_bytes() const {
+    return parlay::reduce(parlay::delayed_tabulate(n_, [&](size_t i) {
+      const FingerLists& F = lists_[i];
+      return F.entries.size() * sizeof(Entry) + F.adv.size() * sizeof(idx_t) + F.radius.size() * sizeof(dist_t) +
+             F.size.size();
+    }));
+  }
 
  private:
   static idx_t checked_size(size_t n) {
@@ -132,7 +157,7 @@ class MetricSkipList {
   template <class Nav>
   void query_knn(const point_type& q, parlay::sequence<Entry>& K) const;
   template <class Nav>
-  void query_range(const point_type& q, dist_t delta, parlay::sequence<idx_t>& out) const;
+  void query_range(const point_type& q, dist_t delta, parlay::sequence<Entry>& out) const;
   void parallel_build(idx_t l, idx_t r);  // build_par.hpp
   void merge(idx_t l, idx_t m, idx_t r);
   size_t resume(idx_t i, idx_t m, idx_t r);

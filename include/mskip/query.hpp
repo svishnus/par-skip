@@ -48,10 +48,10 @@ struct KnnPolicy {
 // K = the open ball of radius delta; every offered point inside it is output.
 struct RangePolicy {
   dist_t delta;
-  parlay::sequence<idx_t>& out;
+  parlay::sequence<Entry>& out;
   dist_t radius() const { return delta; }
   void offer(idx_t j, dist_t dj, idx_t) {
-    if (dj < delta) out.push_back(j);
+    if (dj < delta) out.push_back(Entry{j, dj});
   }
   void stop(idx_t, idx_t) const {}
 };
@@ -79,21 +79,27 @@ void MetricSkipList<Metric>::query_knn(const point_type& q, parlay::sequence<Ent
 
 template <class Metric>
 template <class Nav>
-void MetricSkipList<Metric>::query_range(const point_type& q, dist_t delta, parlay::sequence<idx_t>& out) const {
+void MetricSkipList<Metric>::query_range(const point_type& q, dist_t delta, parlay::sequence<Entry>& out) const {
   detail::RangePolicy P{delta, out};
   Nav nav;
   random_walk(*this, q, P, 0, nav);
 }
 
 template <class Metric>
-idx_t MetricSkipList<Metric>::nearest(const point_type& q) const {
+Neighbor MetricSkipList<Metric>::nearest_dist(const point_type& q) const {
   if (!built_) throw std::logic_error("mskip: query before build");
   if (n_ == 0) throw std::out_of_range("mskip: nearest() on an empty structure");
-  return perm_[advance_ ? query_nearest<AdvanceNav>(q) : query_nearest<BinarySearchNav>(q)];
+  const idx_t m = advance_ ? query_nearest<AdvanceNav>(q) : query_nearest<BinarySearchNav>(q);
+  return Neighbor{perm_[m], dist_to(m, q)};
 }
 
 template <class Metric>
-parlay::sequence<idx_t> MetricSkipList<Metric>::knn(const point_type& q, idx_t k) const {
+idx_t MetricSkipList<Metric>::nearest(const point_type& q) const {
+  return nearest_dist(q).index;
+}
+
+template <class Metric>
+parlay::sequence<Neighbor> MetricSkipList<Metric>::knn_dist(const point_type& q, idx_t k) const {
   if (!built_) throw std::logic_error("mskip: query before build");
   k = std::min(k, n_);
   parlay::sequence<Entry> K = parlay::tabulate(k, [&](size_t e) {
@@ -104,19 +110,28 @@ parlay::sequence<idx_t> MetricSkipList<Metric>::knn(const point_type& q, idx_t k
     else query_knn<BinarySearchNav>(q, K);
   }
   std::sort(K.begin(), K.end(), [](const Entry& a, const Entry& b) { return farther(b, a); });
-  return parlay::map(K, [&](const Entry& x) { return perm_[x.idx]; });
+  return parlay::map(K, [&](const Entry& x) { return Neighbor{perm_[x.idx], x.dist}; });
+}
+
+template <class Metric>
+parlay::sequence<idx_t> MetricSkipList<Metric>::knn(const point_type& q, idx_t k) const {
+  return parlay::map(knn_dist(q, k), [](const Neighbor& x) { return x.index; });
+}
+
+template <class Metric>
+parlay::sequence<Neighbor> MetricSkipList<Metric>::range_dist(const point_type& q, dist_t delta) const {
+  if (!built_) throw std::logic_error("mskip: query before build");
+  parlay::sequence<Entry> out;
+  if (n_ == 0) return {};
+  if (const dist_t d0 = dist_to(0, q); d0 < delta) out.push_back(Entry{0, d0});
+  if (advance_) query_range<AdvanceNav>(q, delta, out);
+  else query_range<BinarySearchNav>(q, delta, out);
+  return parlay::map(out, [&](const Entry& x) { return Neighbor{perm_[x.idx], x.dist}; });
 }
 
 template <class Metric>
 parlay::sequence<idx_t> MetricSkipList<Metric>::range(const point_type& q, dist_t delta) const {
-  if (!built_) throw std::logic_error("mskip: query before build");
-  parlay::sequence<idx_t> out;
-  if (n_ == 0) return out;
-  if (dist_to(0, q) < delta) out.push_back(0);
-  if (advance_) query_range<AdvanceNav>(q, delta, out);
-  else query_range<BinarySearchNav>(q, delta, out);
-  for (idx_t& x : out) x = perm_[x];
-  return out;
+  return parlay::map(range_dist(q, delta), [](const Neighbor& x) { return x.index; });
 }
 
 }  // namespace mskip
