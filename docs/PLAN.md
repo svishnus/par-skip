@@ -426,6 +426,9 @@ shuffles with `parlay::random_permutation(seed)`.
 * queries: batch of 10⁵ NN / kNN queries via `parallel_for`; throughput
 * datasets: uniform 2D/3D/8D, Gaussian clusters (varying expansion rate)
 * Phase 3/4: binary-search `locate` vs `advance`/`align`
+* `bench/history.sh` re-measures every milestone commit with the same
+  benchmark (worktree per milestone) into `bench/results/history.csv`;
+  `bench/plot.py` draws `docs/plots/*.svg` from it (standard library only)
 
 ---
 
