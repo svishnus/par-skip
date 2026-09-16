@@ -4,21 +4,28 @@
 #   make bench       build benchmarks
 #   make SEQ=1 ...   compile with PARLAY_SEQUENTIAL (single-threaded, easier debugging)
 #   make DEBUG=1 ... -O0 -g with ASan/UBSan
+#   make TSAN=1 ...  -O1 -g with ThreadSanitizer (ParlayLib's own reports suppressed)
+# CXXFLAGS given on the command line replace the defaults; the flags below are
+# always appended (override).
 ifeq ($(origin CXX),default)   # make predefines CXX=c++; only override that
   CXX := clang++
 endif
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic
-CXXFLAGS += -Iinclude -isystem external/parlaylib/include
+override CXXFLAGS += -Iinclude -isystem external/parlaylib/include
 LDFLAGS  ?=
 
 ifdef DEBUG
-  CXXFLAGS += -O0 -g -fsanitize=address,undefined -fno-omit-frame-pointer
-  LDFLAGS  += -fsanitize=address,undefined
+  override CXXFLAGS += -O0 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+  override LDFLAGS  += -fsanitize=address,undefined
+else ifdef TSAN
+  override CXXFLAGS += -O1 -g -fsanitize=thread -fno-omit-frame-pointer
+  override LDFLAGS  += -fsanitize=thread
+  export TSAN_OPTIONS ?= suppressions=$(CURDIR)/tests/tsan.supp
 else
-  CXXFLAGS += -O3 -march=native -DNDEBUG
+  override CXXFLAGS += -O3 -march=native -DNDEBUG
 endif
 ifdef SEQ
-  CXXFLAGS += -DPARLAY_SEQUENTIAL
+  override CXXFLAGS += -DPARLAY_SEQUENTIAL
 endif
 
 BUILD   := build

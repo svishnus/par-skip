@@ -1,0 +1,3 @@
+# ThreadSanitizer suppressions for `make TSAN=1 test`: ParlayLib's block
+# allocator uses a lock-free hazard-pointer stack that TSan reports on.
+race:parlay::internal::hazptr_stack
