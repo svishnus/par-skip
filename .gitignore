@@ -1,7 +1,5 @@
 # build outputs
 build/
-build-*/
-prefix/
 *.o
 *.dSYM/
 
