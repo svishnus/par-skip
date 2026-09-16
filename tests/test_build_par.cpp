@@ -43,6 +43,11 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
     // Every walk of the sequential build is resumed at least once in the
     // parallel one (never fewer iterations overall).
     CHECK_CTX(st.steps >= ss.steps, "%s: steps par=%zu seq=%zu", what, st.steps, ss.steps);
+    // the pointer paths of the parallel build were exercised
+    if (advance && par.n() >= 1000)
+      CHECK_CTX(st.pointers_deferred > 0 && st.pointers_refixed > st.pointers_kept && st.pointers_kept > 0,
+                "%s: deferred=%zu refixed=%zu kept=%zu", what, st.pointers_deferred, st.pointers_refixed,
+                st.pointers_kept);
     if (base == 0)
       std::printf("  %-20s alpha=%u n=%-6u adv=%d merges=%-6zu forest depth: max=%zu mean=%.2f  steps par/seq=%.2f"
                   "  align moves/step: focus par=%.2f seq=%.2f, pointers par=%.2f seq=%.2f\n",
@@ -54,7 +59,35 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
   }
 }
 
+// Many seeds, tiny n, every small base case: the merges then happen at every
+// possible range shape (ranges of 1..3 points, halves smaller than alpha,
+// forests that are all roots). Bit-identical to the sequential Alg. 5 build,
+// pointers included.
+static void stress() {
+  size_t configs = 0;
+  for (uint64_t seed = 1; seed <= 6; seed++)
+    for (size_t n : {1u, 2u, 3u, 5u, 8u, 13u, 21u, 34u, 47u})
+      for (idx_t alpha : {1u, 2u, 3u, 5u, 8u})
+        for (size_t base : {1u, 2u, 3u, 5u, 9u}) {
+          auto pts = data::uniform<2>(n, seed * 1000 + n);
+          MetricSkipList<L2<2>> seq(pts, alpha, L2<2>(), seed);
+          seq.build_sequential(true);
+          MetricSkipList<L2<2>> par(pts, alpha, L2<2>(), seed);
+          par.build_parallel(base, true);
+          bool same = par.control() == seq.control() && par.control_list() == seq.control_list() && par.unresolved() == 0;
+          for (idx_t i = 0; same && i < par.n(); i++) same = same_lists(par.lists(i), seq.lists(i), true);
+          CHECK_CTX(same, "stress: seed=%llu n=%zu alpha=%u base=%zu", (unsigned long long)seed, n, alpha, base);
+          if (!same) return;
+          configs++;
+        }
+  std::printf("  stress: %zu configurations bit-identical\n", configs);
+}
+
 int main() {
+  stress();
+  // the limits of the layout: alpha = 255 (uint8_t sizes, full stack buffers) and alpha = 200
+  run<L2<2>>("alpha 255", data::uniform<2>(300, 21), 255, 21, true);
+  run<L2<3>>("alpha 200", data::uniform<3>(260, 22), 200, 22, true);
   for (idx_t alpha : {1u, 2u, 4u, 8u}) {
     for (size_t n : {size_t(1), size_t(alpha), size_t(alpha + 1), size_t(2 * alpha + 1), size_t(33), size_t(300)})
       run<L2<2>>("uniform L2 2D", data::uniform<2>(n, n), alpha, n, true);
