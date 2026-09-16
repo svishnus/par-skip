@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <stdexcept>
 
 #include "check.hpp"
 #include "mskip/data.hpp"
@@ -68,31 +69,51 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
   run<Metric>(name, pts, alpha, queries, seed, true);
 }
 
-// Computed float L2 distances can violate the triangle inequality by an ulp:
-// here d(a,c) > 2 d(a,b) although d(b,c) < d(a,b). Without the metric's
-// slack on the search radius, the walk from a would look in a ball that
-// excludes c, stop at a's empty tail list, and report a as the nearest
-// neighbor of b; the sequential build of (b, a, c) would also miss c as an
-// evictor of b's first list. Found by the Phase 2 review.
+// Computed distances can violate the triangle inequality by an ulp. This
+// L2 accumulates in float (the library's metrics accumulate in double, which
+// makes violations far rarer but not impossible): for the triple below
+// d(a,c) > 2 d(a,b) although d(b,c) < d(a,b). Without the metric's slack on
+// the search radius the walk from a would look in a ball that excludes c,
+// stop at a's empty tail list and report a as the nearest neighbor of b; the
+// sequential build of (b, a, c) would miss c as an evictor of b's first list.
+// Found by the Phase 2 review.
+struct FloatL2 {
+  using point_type = Point<2>;
+  static constexpr dist_t slack = 12 * kEps;  // 2 * (D/2 + 2) eps plus the radius roundings
+  dist_t operator()(const point_type& a, const point_type& b) const {
+    dist_t s = 0;
+    for (int k = 0; k < 2; k++) s += (a[k] - b[k]) * (a[k] - b[k]);
+    return std::sqrt(s);
+  }
+};
+
 static void fp_triangle_regression() {
   const Point<2> a{0.0410199612f, 0.216252118f}, b{0.640225053f, 0.749455512f}, c{1.23943007f, 1.28265893f};
-  L2<2> d;
-  CHECK(d(a, c) > d(a, b) + d(b, c));  // the premise of the test; skip silently otherwise
-  if (!(d(a, c) > d(a, b) + d(b, c))) return;
+  FloatL2 d;
+  CHECK(d(a, c) > d(a, b) + d(a, b) && d(b, c) < d(a, b));  // the premise of the test
   for (idx_t alpha : {1u, 2u}) {
-    MetricSkipList<L2<2>> S(parlay::sequence<Point<2>>{a, c}, alpha, parlay::sequence<idx_t>{0, 1});
+    MetricSkipList<FloatL2> S(parlay::sequence<Point<2>>{a, c}, alpha, parlay::sequence<idx_t>{0, 1});
     for (bool advance : {false, true}) {
       S.build_sequential(advance);
       CHECK_CTX(S.nearest(b) == 1, "alpha=%u advance=%d: nearest(b) is not c", alpha, int(advance));
       CHECK_CTX(S.knn(b, 1) == parlay::sequence<idx_t>{1}, "alpha=%u advance=%d: knn", alpha, int(advance));
       CHECK_CTX(S.range(b, std::nextafter(d(b, c), 1.0f)) == parlay::sequence<idx_t>{1}, "alpha=%u: range", alpha);
     }
-    MetricSkipList<L2<2>> T(parlay::sequence<Point<2>>{b, a, c}, alpha, parlay::sequence<idx_t>{0, 1, 2});
+    MetricSkipList<FloatL2> T(parlay::sequence<Point<2>>{b, a, c}, alpha, parlay::sequence<idx_t>{0, 1, 2});
     T.build_sequential(false);
     CHECK_CTX(check::matches_reference(T, "fp triangle (b, a, c)"), "alpha=%u", alpha);
     T.build_parallel(0, true);
     CHECK_CTX(check::matches_reference(T, "fp triangle (b, a, c) parallel"), "alpha=%u", alpha);
   }
+  // queries need a built structure
+  MetricSkipList<L2<2>> U(parlay::sequence<Point<2>>{a, b}, 1);
+  bool threw = false;
+  try {
+    U.nearest(c);
+  } catch (const std::logic_error&) {
+    threw = true;
+  }
+  CHECK(threw);
 }
 
 int main() {

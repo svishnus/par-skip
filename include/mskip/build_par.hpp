@@ -32,9 +32,8 @@ namespace mskip {
 template <class Metric>
 void MetricSkipList<Metric>::build_parallel(size_t seq_base, bool advance) {
   reset(advance);
-  if (n_ == 0) return;
   seq_base_ = std::max<size_t>(seq_base, alpha_);
-  parallel_build(0, n_ - 1);
+  if (n_ > 0) parallel_build(0, n_ - 1);
   finish_stats();
 }
 

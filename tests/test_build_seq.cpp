@@ -38,7 +38,7 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
       const FingerLists& Fc = S.lists(c);
       const idx_t k = S.control_list()[i];
       const dist_t dc = S.dist(c, i);
-      const dist_t r = dc + std::max(F.radius[F.num_complete() - 1], dc);
+      const dist_t r = (dc + std::max(F.radius[F.num_complete() - 1], dc)) * S.radius_slack();
       CHECK_CTX(k == Fc.locate(r) && Fc.size[k] < alpha, "%s i=%u C=%u k=%u", what, i, c, k);
     }
   }

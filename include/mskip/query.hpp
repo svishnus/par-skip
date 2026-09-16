@@ -87,12 +87,14 @@ void MetricSkipList<Metric>::query_range(const point_type& q, dist_t delta, parl
 
 template <class Metric>
 idx_t MetricSkipList<Metric>::nearest(const point_type& q) const {
+  if (!built_) throw std::logic_error("mskip: query before build");
   if (n_ == 0) throw std::out_of_range("mskip: nearest() on an empty structure");
   return perm_[advance_ ? query_nearest<AdvanceNav>(q) : query_nearest<BinarySearchNav>(q)];
 }
 
 template <class Metric>
 parlay::sequence<idx_t> MetricSkipList<Metric>::knn(const point_type& q, idx_t k) const {
+  if (!built_) throw std::logic_error("mskip: query before build");
   k = std::min(k, n_);
   parlay::sequence<Entry> K = parlay::tabulate(k, [&](size_t e) {
     return Entry{static_cast<idx_t>(e), dist_to(static_cast<idx_t>(e), q)};
@@ -107,6 +109,7 @@ parlay::sequence<idx_t> MetricSkipList<Metric>::knn(const point_type& q, idx_t k
 
 template <class Metric>
 parlay::sequence<idx_t> MetricSkipList<Metric>::range(const point_type& q, dist_t delta) const {
+  if (!built_) throw std::logic_error("mskip: query before build");
   parlay::sequence<idx_t> out;
   if (n_ == 0) return out;
   if (dist_to(0, q) < delta) out.push_back(0);

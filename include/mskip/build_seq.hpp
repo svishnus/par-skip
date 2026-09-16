@@ -131,6 +131,7 @@ size_t MetricSkipList<Metric>::build_point(idx_t i, idx_t r, idx_t settled_from)
 template <class Metric>
 void MetricSkipList<Metric>::reset(bool advance) {
   stats_ = BuildStats();
+  built_ = false;
   advance_ = advance;
   counters_.assign(parlay::num_workers(), WorkerCounters());
   if (advance && pending_.size() != n_) pending_ = parlay::sequence<parlay::sequence<uint32_t>>(n_);
@@ -144,6 +145,7 @@ void MetricSkipList<Metric>::reset(bool advance) {
 
 template <class Metric>
 void MetricSkipList<Metric>::finish_stats() {
+  built_ = true;
   for (const WorkerCounters& c : counters_) {
     stats_.walks += c.walks;
     stats_.steps += c.steps;

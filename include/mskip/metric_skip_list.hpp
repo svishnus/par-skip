@@ -74,6 +74,7 @@ class MetricSkipList {
   // alpha) form the sequential base case.
   void build_parallel(size_t seq_base = kDefaultSeqBase, bool advance = true);
   static constexpr size_t kDefaultSeqBase = 1024;
+  bool built() const { return built_; }          // queries throw std::logic_error before a build
   bool has_advance() const { return advance_; }  // queries then use Alg. 4
   size_t unresolved() const {                    // advance pointers not yet exact; 0 after a build
     size_t total = 0;
@@ -148,6 +149,7 @@ class MetricSkipList {
   parlay::sequence<point_type> pts_;   // in permutation order
   parlay::sequence<FingerLists> lists_;
   parlay::sequence<idx_t> control_, control_list_;
+  bool built_ = false;
   bool advance_ = false;
   parlay::sequence<parlay::sequence<uint32_t>> pending_;  // per point: slots of adv not yet exact
   BuildStats stats_;
