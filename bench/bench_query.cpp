@@ -1,6 +1,6 @@
 // Query throughput: a batch of nearest-neighbor and k-NN queries answered in
 // parallel over a structure built with build_parallel().
-//   bench_query -n 1000000 -alpha 4 -d 2 -data uniform -q 100000 -k 10 [-adv 1]
+//   bench_query -n 1000000 -alpha 4 -d 2 -data uniform -q 100000 -k 10 [-adv 1] [-stride 0]
 // -adv 1 builds advance pointers and queries with Alg. 4; -adv 0 uses binary
 // search (Alg. 3). Queries are drawn from the same generator as the data, so
 // with -data clusters most queries fall far from every cluster: that measures
@@ -29,6 +29,7 @@ struct Query {
     auto pts = bench::dataset<D>(data, n, 1);
     auto qs = bench::dataset<D>(data, nq, 2);
     MetricSkipList<L2<D>> S(pts, alpha);
+    S.set_checkpoint_stride(static_cast<idx_t>(args.num("-stride", 0)));
     bench::Timer tb;
     S.build_parallel(MetricSkipList<L2<D>>::kDefaultSeqBase, adv);
     std::printf("  build           %.3f s\n", tb.seconds());

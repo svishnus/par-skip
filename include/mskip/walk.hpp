@@ -15,24 +15,31 @@ template <class Metric>
 class MetricSkipList;
 
 // Nav concept:
-//   idx_t focus(const FingerLists& F, dist_t r);        // index of F(r) in F
-//   idx_t hint(const FingerLists& F, idx_t k, idx_t e); // start index in F_j for entry e of list k
-//   void  hop(idx_t h);                                 // the walk moves to that entry's point
+//   static constexpr bool kHints;                          // the hint needs each entry's pointer slot
+//   idx_t focus(const FingerLists& F, dist_t r);           // index of F(r) in F
+//   idx_t hint(const FingerLists& F, const ListBuf& L, idx_t e); // start index in F_j for entry e of the focus list L
+//   void  hop(idx_t h);                                    // the walk moves to that entry's point
 //
 // Locates F* = F_cur(r) by binary search, as in Alg. 2/3.
 struct BinarySearchNav {
+  static constexpr bool kHints = false;
   idx_t focus(const FingerLists& F, dist_t r) const { return F.locate(r); }
-  idx_t hint(const FingerLists&, idx_t, idx_t) const { return 0; }
+  idx_t hint(const FingerLists&, const ListBuf&, idx_t) const { return 0; }
   void hop(idx_t) const {}
 };
 
 // Locates F* with the advance pointers and align (Alg. 4/5): k is the index
 // of the focus list in F_cur; the pointer of the chosen entry becomes the k
-// for the next focus point, and align corrects it to F(r). Tail lists carry
-// no pointers; their entries are a subset of the last complete list, whose
-// pointer is used instead (0 when the point has no complete list). moves
-// counts align steps: the cost paid instead of a binary search per step.
+// for the next focus point, and align corrects it to F(r). Only the entries
+// of checkpoint lists and the evictor of every other complete list have a
+// stored pointer; a materialized list carries, for each entry, the slot of
+// its most recent one (for a tail entry: from the last complete list, as in
+// the paper; 0 when the point has no complete list). Every stored pointer is
+// a valid index of F_j, so align from it is correct and only its distance
+// varies. moves counts align steps: the cost paid instead of a binary search
+// per step.
 struct AdvanceNav {
+  static constexpr bool kHints = true;
   idx_t k = 0;
   size_t moves = 0;
   idx_t focus(const FingerLists& F, dist_t r) {
@@ -41,17 +48,7 @@ struct AdvanceNav {
     k = k2;
     return k;
   }
-  idx_t hint(const FingerLists& F, idx_t list, idx_t e) const {
-    if (F.is_complete(list)) return F.adv_begin(list)[e];
-    if (F.num_complete() == 0) return 0;
-    const idx_t j = F.begin(list)[e].idx;
-    const idx_t last = F.num_complete() - 1;
-    const Entry* L = F.begin(last);
-    for (idx_t t = 0; t < F.alpha; t++)
-      if (L[t].idx == j) return F.adv_begin(last)[t];
-    assert(false && "tail entry missing from the last complete list");
-    return 0;
-  }
+  idx_t hint(const FingerLists& F, const ListBuf& L, idx_t e) const { return F.adv_at(L.src[e]); }
   void hop(idx_t h) { k = h; }
 };
 
@@ -70,32 +67,32 @@ template <class Metric, class Policy, class Nav>
 size_t random_walk(const MetricSkipList<Metric>& S, const typename Metric::point_type& q, Policy& K,
                    idx_t cur, Nav& nav) {
   const idx_t alpha = S.alpha();
+  ListBuf L;  // the focus list, materialized once per step
   for (size_t steps = 1;; steps++) {
     const FingerLists& F = S.lists(cur);
     const dist_t dc = S.dist_to(cur, q);
     const dist_t thr = std::max(K.radius(), dc);  // "improves K or is closer than cur"
     const idx_t k = nav.focus(F, (dc + thr) * S.radius_slack());  // any such point lies within dc + thr of cur
-    const Entry* L = F.begin(k);
-    const idx_t sz = F.size[k];
+    F.materialize<Nav::kHints>(k, L);
     idx_t e = 0;
     dist_t dj = 0;
-    for (; e < sz; e++) {  // first (highest-priority) entry with the property
-      dj = S.dist_to(L[e].idx, q);
+    for (; e < L.size; e++) {  // first (highest-priority) entry with the property
+      dj = S.dist_to(L.ent[e].idx, q);
       if (dj < thr) break;
     }
     idx_t h;
-    if (e < sz) {
-      h = nav.hint(F, k, e);
-      K.offer(L[e].idx, dj, h);
-    } else if (sz < alpha) {  // tail list: it holds every candidate, none qualifies
+    if (e < L.size) {
+      h = nav.hint(F, L, e);
+      K.offer(L.ent[e].idx, dj, h);
+    } else if (L.size < alpha) {  // tail list: it holds every candidate, none qualifies
       K.stop(cur, k);
       return steps;
     } else {  // walk outward to the lowest-priority entry
-      e = sz - 1;
-      h = nav.hint(F, k, e);
+      e = L.size - 1;
+      h = nav.hint(F, L, e);
     }
     nav.hop(h);
-    cur = L[e].idx;
+    cur = L.ent[e].idx;
   }
 }
 

@@ -1,7 +1,8 @@
 // Construction: sequential (optional) vs parallel, and the structure size.
-//   bench_build -n 1000000 -alpha 4 -d 2 -data uniform -rounds 3 [-seq 1] [-base 1024] [-adv 1]
+//   bench_build -n 1000000 -alpha 4 -d 2 -data uniform -rounds 3 [-seq 1] [-base 1024] [-adv 1] [-stride 0]
 // -adv 1 maintains advance pointers (Alg. 5 / Sec. 5.5); -adv 0 uses binary
-// search (Alg. 2 / Alg. 6). Vary PARLAY_NUM_THREADS for scaling
+// search (Alg. 2 / Alg. 6). -stride sets the checkpoint stride of the list
+// storage (0: the default). Vary PARLAY_NUM_THREADS for scaling
 // (bench/scaling.sh).
 #include <algorithm>
 #include <cstdio>
@@ -25,6 +26,7 @@ struct Build {
     std::printf("  advance pointers: %s\n", adv ? "yes" : "no (binary search)");
     auto pts = bench::dataset<D>(data, n, 1);
     MetricSkipList<L2<D>> S(pts, alpha);
+    S.set_checkpoint_stride(static_cast<idx_t>(args.num("-stride", 0)));
     double best_seq = 1e300, best_par = 1e300;
     if (seq) {
       for (int r = 0; r < rounds; r++) {
@@ -48,14 +50,10 @@ struct Build {
                 " %zu merges, forest depth max %zu)%s\n",
                 best_par, st.steps / 1e6, double(st.focus_moves) / st.steps, double(st.pointer_moves) / st.steps,
                 st.merges, st.max_forest_depth, speedup);
-    size_t lists = 0, bytes = 0;
-    for (idx_t i = 0; i < S.n(); i++) {
-      const FingerLists& F = S.lists(i);
-      lists += F.num_lists();
-      bytes += F.entries.size() * sizeof(Entry) + F.adv.size() * sizeof(idx_t) + F.radius.size() * sizeof(dist_t) +
-               F.size.size();
-    }
-    std::printf("  structure       %.1f lists/point, %.1f MB\n", double(lists) / n, bytes / 1048576.0);
+    size_t lists = 0;
+    for (idx_t i = 0; i < S.n(); i++) lists += S.lists(i).num_lists();
+    std::printf("  structure       %.1f lists/point, %.1f MB (%.1f MB allocated; checkpoint stride %u)\n",
+                double(lists) / n, S.memory_bytes() / 1048576.0, S.allocated_bytes() / 1048576.0, S.checkpoint_stride());
   }
 };
 

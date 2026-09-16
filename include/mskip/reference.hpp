@@ -18,20 +18,16 @@ template <class Metric>
 FingerLists reference_lists(const MetricSkipList<Metric>& S, idx_t i) {
   const idx_t a = S.alpha();
   const idx_t n = S.n();
-  FingerLists F(a);
-  Entry buf[kMaxAlpha];
+  FingerLists F(a, false, S.checkpoint_stride());
+  ListBuf L;
   const idx_t t = std::min<idx_t>(a, n - 1 - i);
-  for (idx_t e = 0; e < t; e++) buf[e] = Entry{i + 1 + e, S.dist(i, i + 1 + e)};
-  F.push_back(buf, t);
+  for (idx_t e = 0; e < t; e++) L.ent[e] = Entry{i + 1 + e, S.dist(i, i + 1 + e)};
+  F.push_first(L.ent, t);
   if (t == a) {
+    F.materialize<true>(0, L);
     for (idx_t j = i + a + 1; j < n; j++) {
       const dist_t d = S.dist(i, j);
-      if (d < F.radius.back()) {
-        const idx_t f = farthest(buf, a);
-        std::copy(buf + f + 1, buf + a, buf + f);
-        buf[a - 1] = Entry{j, d};
-        F.push_back(buf, a);
-      }
+      if (d < F.last_radius()) F.push_evict(L, farthest(L.ent, a), Entry{j, d});
     }
   }
   F.build_tail();

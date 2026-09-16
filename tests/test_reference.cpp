@@ -17,6 +17,7 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
   MetricSkipList<Metric> S(pts, alpha, Metric(), seed);
   parlay::random rng(seed + 17);
   size_t lists = 0;
+  ListBuf L;
   for (idx_t i = 0; i < S.n(); i++) {
     FingerLists F = reference_lists(S, i);
     lists += F.num_lists();
@@ -26,20 +27,21 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
     // radii of F_i, values just below each radius, and random radii
     parlay::sequence<dist_t> probes;
     for (idx_t k = 0; k < F.num_lists(); k++) {
-      probes.push_back(F.radius[k]);
-      if (F.radius[k] > 0) probes.push_back(std::nextafter(F.radius[k], dist_t(0)));
+      probes.push_back(F.radius(k));
+      if (F.radius(k) > 0) probes.push_back(std::nextafter(F.radius(k), dist_t(0)));
     }
-    for (int t = 0; t < 8; t++) probes.push_back(static_cast<dist_t>(F.radius[0] * 1.5 * data::unit(rng, i * 8 + t)));
+    for (int t = 0; t < 8; t++) probes.push_back(static_cast<dist_t>(F.radius(0) * 1.5 * data::unit(rng, i * 8 + t)));
     probes.push_back(std::numeric_limits<dist_t>::infinity());
     for (size_t t = 0; t < probes.size(); t++) {
       const dist_t r = probes[t];
       const idx_t k = F.locate(r);
-      CHECK(k < F.num_lists() && F.radius[k] <= r && (k == 0 || F.radius[k - 1] > r));
+      CHECK(k < F.num_lists() && F.radius(k) <= r && (k == 0 || F.radius(k - 1) > r));
       const idx_t from = static_cast<idx_t>(rng.ith_rand(i + 7919 * t) % F.num_lists());
       CHECK_CTX(F.align(from, r) == k, "%s i=%u: align(%u, %g) != locate", name, i, from, static_cast<double>(r));
       auto want = ball_prefix(S, i, r);
-      bool same = want.size() == F.size[k];
-      for (idx_t e = 0; same && e < F.size[k]; e++) same = F.begin(k)[e].idx == want[e];
+      F.materialize<false>(k, L);
+      bool same = want.size() == L.size && L.size == F.size(k);
+      for (idx_t e = 0; same && e < L.size; e++) same = L.ent[e].idx == want[e];
       CHECK_CTX(same, "%s alpha=%u i=%u r=%g: F_i(r) != alpha highest-priority points in the ball", name,
                 alpha, i, static_cast<double>(r));
       if (!same) return;

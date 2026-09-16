@@ -113,11 +113,13 @@ size_t MetricSkipList<Metric>::resume(idx_t i, idx_t m, idx_t r) {
   assert(F.num_complete() > 0);
   assert(control_list_[i] < lists_[control_[i]].num_lists());  // lists never shrink
   if (!advance_) {
-    BuildPolicy K{*this, i, F, m + 1, true, nullptr};
+    BuildPolicy K(*this, i, F, m + 1, true, nullptr);
+    F.materialize<true>(F.num_complete() - 1, K.cur);
     BinarySearchNav nav;
     return random_walk(*this, pts_[i], K, control_[i], nav);
   }
-  BuildPolicy K{*this, i, F, m + 1, r == n_ - 1, &pending_[i]};
+  BuildPolicy K(*this, i, F, m + 1, r == n_ - 1, &pending_[i]);
+  F.materialize<true>(F.num_complete() - 1, K.cur);
   AdvanceNav nav{control_list_[i]};  // the focus list where the walk was blocked
   const size_t steps = random_walk(*this, pts_[i], K, control_[i], nav);
   WorkerCounters& c = counters();
@@ -128,11 +130,12 @@ size_t MetricSkipList<Metric>::resume(idx_t i, idx_t m, idx_t r) {
 }
 
 // Re-aligns the recorded pointers of F_i now that every target is finished
-// for this level. Slots are recorded in creation order, so when the previous
-// list also holds the target (every entry but the evictor, at the same
-// position or one to the right) its pointer has been fixed already and is
-// the push-down start: radii decrease, so the answer only moves down from
-// it. Otherwise the recorded start is used. A pointer that resolves to a
+// for this level. Slots are recorded in creation order, so when an earlier
+// stored pointer for the same target exists (a checkpoint entry kept from an
+// earlier list: its evictor slot within the block or its slot in the
+// previous checkpoint) it has been fixed already and is the push-down start:
+// radii decrease, so the answer only moves down from it. Otherwise (list 0
+// and evictors) the recorded start is used. A pointer that resolves to a
 // complete list is exact for good; one that lands in a tail stays recorded
 // unless the level is final.
 template <class Metric>
@@ -142,19 +145,14 @@ void MetricSkipList<Metric>::fixup(idx_t i, bool targets_final) {
   FingerLists& F = lists_[i];
   size_t moves = 0, w = 0;
   for (uint32_t s : pend) {
-    const idx_t k = s / alpha_;
-    const idx_t e = s - k * alpha_;
-    const idx_t j = F.entries[s].idx;
+    const auto [k, e] = F.slot_pos(s);
+    const idx_t j = F.slot_entry(s).idx;
     const FingerLists& Fj = lists_[j];
-    idx_t from = F.adv[s];
-    if (k > 0 && e + 1 < alpha_) {  // kept from list k-1 (the evictor sits at alpha-1)
-      const idx_t t = F.begin(k - 1)[e].idx == j ? e : e + 1;
-      assert(F.begin(k - 1)[t].idx == j);
-      from = F.adv_begin(k - 1)[t];
-    }
-    const idx_t p = Fj.align(from, F.radius[k]);
+    idx_t from = F.adv_at(s);
+    if (k > 0 && e + 1 < alpha_) from = F.adv_at(F.prev_slot(k, e));  // kept from an earlier list
+    const idx_t p = Fj.align(from, F.radius(k));
     moves += p > from ? p - from : from - p;
-    F.adv[s] = p;
+    F.adv_at(s) = p;
     if (BuildPolicy::still_pending(Fj, p, targets_final)) pend[w++] = s;
   }
   WorkerCounters& c = counters();

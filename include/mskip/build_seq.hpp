@@ -17,20 +17,21 @@
 
 namespace mskip {
 
-// K is the last list of F_i. offer(j) with d(s_i, s_j) < radius appends the
-// list with the farthest entry replaced by j (j has the lowest priority seen
-// so far, so appending keeps the idx order). stop() records the control point
-// and builds the tail.
+// K is the last list of F_i, kept materialized in `cur`. offer(j) with
+// d(s_i, s_j) < radius appends the list with the farthest entry replaced by
+// j (j has the lowest priority seen so far, so appending keeps the idx
+// order). stop() records the control point and builds the tail.
 //
-// With advance pointers (F.has_adv), every entry of the new list gets its
-// pointer F_j(radius) by aligning in F_j from a nearby start: the previous
-// list's pointer for entries kept from it ("push-down"), or the pointer the
-// focus list held for the evictor ("shift focus"), as in Alg. 5. A target
-// j < settled_from may be under construction by another worker, so its
-// pointer is deferred: it keeps the start value and its slot is recorded in
-// `pending`. A pointer that lands in a tail list of a target that is not
-// final (its lists still grow at a later level) is recorded too. The parallel
-// build re-aligns pending slots once the targets are finished.
+// With advance pointers (F.has_adv), the new list's evictor gets its pointer
+// F_j(radius) by aligning in F_j from the pointer the focus list held for it
+// ("shift focus"); at a checkpoint list every kept entry gets one too, from
+// its most recent stored pointer ("push-down"), as in Alg. 5 but only where
+// a pointer is stored. A target j < settled_from may be under construction
+// by another worker, so its pointer is deferred: it keeps the start value
+// and its slot is recorded in `pending`. A pointer that lands in a tail list
+// of a target that is not final (its lists still grow at a later level) is
+// recorded too. The parallel build re-aligns pending slots once the targets
+// are finished.
 template <class Metric>
 struct MetricSkipList<Metric>::BuildPolicy {
   MetricSkipList& S;
@@ -41,8 +42,13 @@ struct MetricSkipList<Metric>::BuildPolicy {
   parlay::sequence<uint32_t>* pending;
   size_t moves = 0;     // align steps spent on pointers
   size_t deferred = 0;  // pointers left unaligned (target not readable)
+  ListBuf cur;          // the last list of F
 
-  dist_t radius() const { return F.radius.back(); }
+  BuildPolicy(MetricSkipList& s, idx_t owner, FingerLists& f, idx_t settled, bool final_targets,
+              parlay::sequence<uint32_t>* pend)
+      : S(s), i(owner), F(f), settled_from(settled), targets_final(final_targets), pending(pend) {}
+
+  dist_t radius() const { return F.last_radius(); }
 
   // A pointer that lands in the tail of a target whose lists may still grow
   // is not exact yet.
@@ -64,28 +70,37 @@ struct MetricSkipList<Metric>::BuildPolicy {
     return p;
   }
 
-  void offer(idx_t j, dist_t dj, idx_t hint) {
-    if (!(dj < F.radius.back())) return;
-    const idx_t a = S.alpha_;
-    const idx_t k = F.num_lists() - 1;
-    const Entry* last = F.begin(k);
-    const idx_t f = farthest(last, a);
-    Entry buf[kMaxAlpha];
-    for (idx_t e = 0, m = 0; e < a; e++)
-      if (e != f) buf[m++] = last[e];
-    buf[a - 1] = Entry{j, dj};
-    F.push_back(buf, a);
-    if (F.has_adv) {
-      const dist_t rho = F.radius.back();
-      const idx_t* prev = F.adv_begin(k);
-      idx_t* now = F.adv_begin(k + 1);
-      for (idx_t e = 0; e + 1 < a; e++) now[e] = settle(buf[e].idx, prev[e < f ? e : e + 1], rho, F.slot(k + 1, e));
-      now[a - 1] = settle(j, hint, rho, F.slot(k + 1, a - 1));
-    }
+  // Settles the pointer of entry e of the new list k from `from` and records
+  // its slot in cur.
+  void settle_slot(idx_t k, idx_t e, idx_t from) {
+    const size_t slot = F.adv_slot(k, e);
+    F.adv_at(slot) = settle(cur.ent[e].idx, from, F.radius(k), slot);
+    cur.src[e] = static_cast<uint32_t>(slot);
   }
 
-  void stop(idx_t cur, idx_t k) {
-    S.control_[i] = cur;
+  void offer(idx_t j, dist_t dj, idx_t hint) {
+    if (!(dj < F.last_radius())) return;
+    const idx_t a = S.alpha_;
+    const idx_t f = farthest(cur.ent, a);
+    const idx_t k = F.num_lists();  // the new list
+    if (F.has_adv && F.is_checkpoint(k)) {
+      // the kept entries get pointers of their own: start from their most
+      // recent ones (push-down), read before push_evict retags the slots
+      idx_t from[kMaxAlpha];
+      for (idx_t e = 0, p = 0; e + 1 < a; e++, p++) {
+        if (p == f) p++;
+        from[e] = F.adv_at(cur.src[p]);
+      }
+      F.push_evict(cur, f, Entry{j, dj});
+      for (idx_t e = 0; e + 1 < a; e++) settle_slot(k, e, from[e]);
+    } else {
+      F.push_evict(cur, f, Entry{j, dj});
+    }
+    if (F.has_adv) settle_slot(k, a - 1, hint);
+  }
+
+  void stop(idx_t cur_pt, idx_t k) {
+    S.control_[i] = cur_pt;
     S.control_list_[i] = k;
     F.build_tail();
   }
@@ -101,7 +116,7 @@ void MetricSkipList<Metric>::provisional(idx_t i, idx_t r) {
   if (t > 0) {
     Entry buf[kMaxAlpha];
     for (idx_t e = 0; e < t; e++) buf[e] = Entry{i + 1 + e, dist(i, i + 1 + e)};
-    F.push_back(buf, t);
+    F.push_first(buf, t);
   }
   F.build_tail();
   control_[i] = i;
@@ -120,18 +135,21 @@ size_t MetricSkipList<Metric>::build_point(idx_t i, idx_t r, idx_t settled_from)
   }
   FingerLists& F = lists_[i];
   F.clear();
-  Entry buf[kMaxAlpha];
-  for (idx_t e = 0; e < alpha_; e++) buf[e] = Entry{i + 1 + e, dist(i, i + 1 + e)};
-  F.push_back(buf, alpha_);
   if (!advance_) {
-    BuildPolicy K{*this, i, F, settled_from, true, nullptr};
+    BuildPolicy K(*this, i, F, settled_from, true, nullptr);
+    for (idx_t e = 0; e < alpha_; e++) K.cur.ent[e] = Entry{i + 1 + e, dist(i, i + 1 + e)};
+    K.cur.size = alpha_;
+    F.push_first(K.cur.ent, alpha_);
+    F.materialize<true>(0, K.cur);  // the slot tags
     BinarySearchNav nav;
     return random_walk(*this, pts_[i], K, i + alpha_, nav);
   }
   pending_[i].clear();
-  BuildPolicy K{*this, i, F, settled_from, r == n_ - 1, &pending_[i]};
-  idx_t* adv0 = F.adv_begin(0);
-  for (idx_t e = 0; e < alpha_; e++) adv0[e] = K.settle(buf[e].idx, 0, F.radius[0], F.slot(0, e));
+  BuildPolicy K(*this, i, F, settled_from, r == n_ - 1, &pending_[i]);
+  for (idx_t e = 0; e < alpha_; e++) K.cur.ent[e] = Entry{i + 1 + e, dist(i, i + 1 + e)};
+  K.cur.size = alpha_;
+  F.push_first(K.cur.ent, alpha_);
+  for (idx_t e = 0; e < alpha_; e++) K.settle_slot(0, e, 0);  // every pointer starts at F_j[0]
   AdvanceNav nav;  // k = 0: the first list of s_cur
   const size_t steps = random_walk(*this, pts_[i], K, i + alpha_, nav);
   WorkerCounters& c = counters();
@@ -141,12 +159,24 @@ size_t MetricSkipList<Metric>::build_point(idx_t i, idx_t r, idx_t settled_from)
   return steps;
 }
 
-// Resets every list for a build in the given mode. Each point's arrays are
-// reserved for kReserveFactor times the expected number of lists,
-// alpha (ln n - ln alpha) + alpha (the first list, one per evictor, the
-// tail), so that only the few points above that ever reallocate: measured on
-// uniform 2D, alpha 4, n = 2e5, this takes the resident set from 3.3x to
-// 1.8x the logical size at no cost in time.
+// Stored lists to reserve for s_i: the expected number, alpha (ln (n - i) -
+// ln alpha) + 1 (one per evictor plus the first list; the evictor count is
+// a sum of independent Bernoullis, so its standard deviation is about the
+// square root of its mean), plus two standard deviations, so that only a
+// few percent of the points ever grow their buffer.
+template <class Metric>
+idx_t MetricSkipList<Metric>::reserve_lists(idx_t i) const {
+  const idx_t left = n_ - i;  // points after s_i, plus one
+  if (left <= alpha_) return 1;
+  const double mean = alpha_ * (std::log(double(left)) - std::log(double(alpha_))) + 1;
+  const double want = std::ceil(mean + 2 * std::sqrt(std::max(mean, 1.0)));
+  return static_cast<idx_t>(std::min<double>(want, left - alpha_ + 1));
+}
+
+// Resets every list for a build in the given mode. The initial buffers are
+// slices of one slab (see reserve_lists), so the allocator's rounding is not
+// paid per point; a point that outgrows its slice moves to a buffer of its
+// own, and the slice is abandoned until the next build.
 template <class Metric>
 void MetricSkipList<Metric>::reset(bool advance) {
   stats_ = BuildStats();
@@ -154,14 +184,20 @@ void MetricSkipList<Metric>::reset(bool advance) {
   advance_ = advance;
   counters_.assign(parlay::num_workers(), WorkerCounters());
   if (advance && pending_.size() != n_) pending_ = parlay::sequence<parlay::sequence<uint32_t>>(n_);
-  const double expected = alpha_ * std::max(0.0, std::log(double(n_)) - std::log(double(alpha_))) + alpha_ + 1;
-  const size_t reserve = static_cast<size_t>(kReserveFactor * expected);
-  parlay::parallel_for(0, n_, [&](size_t i) {
-    lists_[i] = FingerLists(alpha_, advance);
-    lists_[i].reserve(std::min(reserve, static_cast<size_t>(n_ - i) + 1));
+  const FingerLists proto(alpha_, advance, stride_);
+  auto bytes = parlay::tabulate(n_, [&](size_t i) { return proto.bytes_for(reserve_lists(static_cast<idx_t>(i))); });
+  auto scanned = parlay::scan(bytes);
+  const parlay::sequence<size_t>& offset = scanned.first;
+  parlay::parallel_for(0, n_, [&](size_t i) {  // drop every buffer before the slab they may live in
+    lists_[i] = FingerLists(alpha_, advance, stride_);
     control_[i] = static_cast<idx_t>(i);
     control_list_[i] = 0;
     if (advance) pending_[i].clear();
+  });
+  slab_.mem = parlay::sequence<std::byte>();  // release the old slab before the new one is mapped
+  slab_.mem = parlay::sequence<std::byte>::uninitialized(scanned.second);
+  parlay::parallel_for(0, n_, [&](size_t i) {
+    lists_[i].attach(slab_.mem.data() + offset[i], reserve_lists(static_cast<idx_t>(i)));
   });
 }
 

@@ -86,7 +86,6 @@ class MetricSkipList {
   // alpha) form the sequential base case.
   void build_parallel(size_t seq_base = kDefaultSeqBase, bool advance = true);
   static constexpr size_t kDefaultSeqBase = 1024;
-  static constexpr double kReserveFactor = 1.25;  // list arrays reserved per point, see reset()
   bool built() const { return built_; }          // queries throw std::logic_error before a build
   bool has_advance() const { return advance_; }  // queries then use Alg. 4
   size_t unresolved() const {                    // advance pointers not yet exact; 0 after a build
@@ -94,6 +93,17 @@ class MetricSkipList {
     for (const auto& p : pending_) total += p.size();
     return total;
   }
+  // Lists stored in full every `stride` lists (docs/PLAN.md section 2);
+  // the others are deltas replayed from the nearest checkpoint. 0 restores
+  // the default (FingerLists::default_stride, alpha). Takes effect at the
+  // next build; smaller strides trade memory for cheaper materialization
+  // and closer pointer hints. Throws std::invalid_argument above
+  // FingerLists::max_stride(alpha) = 257 - alpha.
+  void set_checkpoint_stride(idx_t stride) {
+    if (stride > FingerLists::max_stride(alpha_)) throw std::invalid_argument("mskip: checkpoint stride too large");
+    stride_ = stride ? stride : FingerLists::default_stride(alpha_);
+  }
+  idx_t checkpoint_stride() const { return stride_; }
 
   // Queries. Results are original indices (into the pts passed to the
   // constructor), or Neighbor{index, distance} from the _dist variants.
@@ -123,14 +133,14 @@ class MetricSkipList {
   const parlay::sequence<idx_t>& control() const { return control_; }
   const parlay::sequence<idx_t>& control_list() const { return control_list_; }
   const BuildStats& stats() const { return stats_; }
-  // Bytes held by the finger lists (logical size; capacity is up to twice
-  // that, see FingerLists::reserve).
+  // Bytes held by the finger lists: the stored representation, and the
+  // buffers holding it (reserved for the expected number of lists plus two
+  // standard deviations, see reserve_lists; a build's peak is the latter).
   size_t memory_bytes() const {
-    return parlay::reduce(parlay::delayed_tabulate(n_, [&](size_t i) {
-      const FingerLists& F = lists_[i];
-      return F.entries.size() * sizeof(Entry) + F.adv.size() * sizeof(idx_t) + F.radius.size() * sizeof(dist_t) +
-             F.size.size();
-    }));
+    return parlay::reduce(parlay::delayed_tabulate(n_, [&](size_t i) { return lists_[i].logical_bytes(); }));
+  }
+  size_t allocated_bytes() const {
+    return parlay::reduce(parlay::delayed_tabulate(n_, [&](size_t i) { return lists_[i].bytes(); }));
   }
 
  private:
@@ -142,12 +152,14 @@ class MetricSkipList {
   void init(parlay::sequence<point_type> pts) {
     if (alpha_ < 1 || alpha_ > kMaxAlpha) throw std::invalid_argument("mskip: alpha must be in [1, 255]");
     pts_ = parlay::tabulate(n_, [&](size_t i) { return pts[perm_[i]]; });
-    lists_ = parlay::sequence<FingerLists>(n_, FingerLists(alpha_));
+    stride_ = FingerLists::default_stride(alpha_);
+    lists_ = parlay::sequence<FingerLists>(n_, FingerLists(alpha_, false, stride_));
     control_ = parlay::tabulate(n_, [](size_t i) { return static_cast<idx_t>(i); });
     control_list_ = parlay::sequence<idx_t>(n_, idx_t{0});
   }
 
   struct BuildPolicy;  // build_seq.hpp
+  idx_t reserve_lists(idx_t i) const;
   void reset(bool advance);
   void finish_stats();
   size_t build_point(idx_t i, idx_t r, idx_t settled_from);
@@ -176,9 +188,20 @@ class MetricSkipList {
   Metric metric_;
   idx_t alpha_;
   idx_t n_;
+  idx_t stride_ = 0;                   // checkpoint stride of every FingerLists
   parlay::sequence<idx_t> perm_;       // perm_[i] = original index of s_i
   parlay::sequence<point_type> pts_;   // in permutation order
   parlay::sequence<FingerLists> lists_;
+  // The initial buffers of all lists (reset()). A copy of the structure
+  // gives every FingerLists a buffer of its own, so the slab is not copied.
+  struct Slab {
+    parlay::sequence<std::byte> mem;
+    Slab() = default;
+    Slab(const Slab&) {}
+    Slab(Slab&&) noexcept = default;
+    Slab& operator=(const Slab&) { return *this; }
+    Slab& operator=(Slab&&) noexcept = default;
+  } slab_;
   parlay::sequence<idx_t> control_, control_list_;
   bool built_ = false;
   bool advance_ = false;

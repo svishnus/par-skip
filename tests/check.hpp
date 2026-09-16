@@ -44,10 +44,13 @@ template <class Metric>
 std::string validate_lists(const mskip::MetricSkipList<Metric>& S, mskip::idx_t i, const mskip::FingerLists& F) {
   std::string err = F.validate(i);
   if (!err.empty()) return err;
-  for (mskip::idx_t k = 0; k < F.num_lists(); k++)
-    for (mskip::idx_t e = 0; e < F.size[k]; e++)
-      if (F.begin(k)[e].dist != S.dist(i, F.begin(k)[e].idx))
+  mskip::ListBuf L;
+  for (mskip::idx_t k = 0; k < F.num_lists(); k++) {
+    F.materialize<false>(k, L);
+    for (mskip::idx_t e = 0; e < L.size; e++)
+      if (L.ent[e].dist != S.dist(i, L.ent[e].idx))
         return "F_" + std::to_string(i) + " list " + std::to_string(k) + ": cached dist";
+  }
   return "";
 }
 
@@ -57,7 +60,9 @@ std::string validate_point(const mskip::MetricSkipList<Metric>& S, mskip::idx_t 
 }
 
 // Advance pointers by definition: F_i[k].advance[j] is the index of
-// F_j(F_i[k].radius), for every entry of every complete list.
+// F_j(F_i[k].radius), for every stored pointer (every entry of a checkpoint
+// list, the evictor of every other complete list), and the materialized
+// lists carry the slots of exactly those pointers.
 template <class Metric>
 bool check_advance(const mskip::MetricSkipList<Metric>& S, const char* what) {
   if (!S.has_advance()) {
@@ -68,22 +73,33 @@ bool check_advance(const mskip::MetricSkipList<Metric>& S, const char* what) {
     std::fprintf(stderr, "%s: %zu pointers still pending after the build\n", what, S.unresolved());
     return false;
   }
+  mskip::ListBuf L;
   for (mskip::idx_t i = 0; i < S.n(); i++) {
     const mskip::FingerLists& F = S.lists(i);
-    if (!F.has_adv || F.adv.size() != F.entries.size()) {
+    if (!F.has_adv) {
       std::fprintf(stderr, "%s: F_%u adv array\n", what, i);
       return false;
     }
-    for (mskip::idx_t k = 0; k < F.num_complete(); k++)
+    for (mskip::idx_t k = 0; k < F.num_complete(); k++) {
+      F.materialize<true>(k, L);
       for (mskip::idx_t e = 0; e < F.alpha; e++) {
-        const mskip::idx_t j = F.begin(k)[e].idx;
-        const mskip::idx_t want = S.lists(j).locate(F.radius[k]);
-        if (F.adv_begin(k)[e] != want) {
+        const mskip::idx_t j = L.ent[e].idx;
+        if (!F.has_adv_slot(k, e)) {
+          // no pointer of its own: the slot must be the point's most recent one
+          if (F.slot_entry(L.src[e]).idx != j || F.slot_pos(L.src[e]).first >= k) {
+            std::fprintf(stderr, "%s: F_%u[%u] entry %u carries slot %u\n", what, i, k, e, L.src[e]);
+            return false;
+          }
+          continue;
+        }
+        const mskip::idx_t want = S.lists(j).locate(F.radius(k));
+        if (L.src[e] != F.adv_slot(k, e) || F.adv_at(L.src[e]) != want) {
           std::fprintf(stderr, "%s: F_%u[%u].advance[%u] = %u, F_%u(%g) is list %u\n", what, i, k, j,
-                       F.adv_begin(k)[e], j, static_cast<double>(F.radius[k]), want);
+                       F.adv_at(L.src[e]), j, static_cast<double>(F.radius(k)), want);
           return false;
         }
       }
+    }
   }
   return true;
 }
