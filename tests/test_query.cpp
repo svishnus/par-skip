@@ -13,7 +13,8 @@ template <class Metric>
 static void run(const char* name, const parlay::sequence<typename Metric::point_type>& pts, idx_t alpha,
                 const parlay::sequence<typename Metric::point_type>& queries, uint64_t seed, bool advance) {
   MetricSkipList<Metric> S(pts, alpha, Metric(), seed);
-  S.build_sequential(advance);  // Alg. 4 queries (advance) or Alg. 3 queries
+  if (advance) S.build_parallel(7, true);   // Alg. 4 queries over a parallel build
+  else S.build_sequential(false);           // Alg. 3 queries
   const idx_t n = S.n();
   // original index -> permutation position, to compare with the brute force
   parlay::sequence<idx_t> pos(n);

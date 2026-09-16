@@ -5,8 +5,14 @@
 // same control point depend on it having been resumed first, so the left
 // half is processed layer by layer over the control forest.
 //
-// Advance pointers are not maintained by the parallel build yet (Sec. 5.5,
-// next phase): it always builds the binary-search structure.
+// With advance pointers (Sec. 5.5) the resumed walks navigate with the
+// pointers and align like the sequential Alg. 5, and new pointers are
+// aligned immediately when their target is in the finished right half.
+// Pointers into the left half are deferred, and pointers that land in the
+// tail of a target whose lists still grow are provisional; both are recorded
+// per point and re-aligned after the merge (see fixup). This replaces the
+// paper's advance tree: every pointer is touched once per level at most, and
+// the walks never wait for a pointer.
 #pragma once
 
 #include <algorithm>
@@ -24,8 +30,8 @@
 namespace mskip {
 
 template <class Metric>
-void MetricSkipList<Metric>::build_parallel(size_t seq_base, bool /*advance*/) {
-  reset(false);
+void MetricSkipList<Metric>::build_parallel(size_t seq_base, bool advance) {
+  reset(advance);
   if (n_ == 0) return;
   seq_base_ = std::max<size_t>(seq_base, alpha_);
   parallel_build(0, n_ - 1);
@@ -76,6 +82,10 @@ void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
       return children.cut(offsets[f - l], offsets[f - l + 1]);
     }));
   }
+  if (advance_) {
+    const bool final = r == n_ - 1;
+    parlay::parallel_for(0, cnt, [&](size_t t) { fixup(static_cast<idx_t>(l + t), final); });
+  }
   WorkerCounters& c = counters_[parlay::worker_id()];
   c.merges++;
   c.layers += depth;
@@ -84,15 +94,61 @@ void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
 
 // Resumes the walk of s_i at C[i] against the range now ending at r. A point
 // without a complete list (C[i] == i) starts from scratch, or stays
-// provisional if it still has fewer than alpha successors.
+// provisional if it still has fewer than alpha successors. Targets in the
+// left half [l, m] may be under construction in this layer, so pointers into
+// them are deferred (settled_from = m + 1).
 template <class Metric>
 size_t MetricSkipList<Metric>::resume(idx_t i, idx_t m, idx_t r) {
   if (C_[i] == i) return build_point(i, r, m + 1);
   FingerLists& F = lists_[i];
   F.truncate_tail();
-  BuildPolicy K{*this, i, F, m + 1, true, nullptr};
-  BinarySearchNav nav;
-  return random_walk(*this, pts_[i], K, C_[i], nav);
+  if (!advance_) {
+    BuildPolicy K{*this, i, F, m + 1, true, nullptr};
+    BinarySearchNav nav;
+    return random_walk(*this, pts_[i], K, C_[i], nav);
+  }
+  BuildPolicy K{*this, i, F, m + 1, r == n_ - 1, &pending_[i]};
+  AdvanceNav nav{K_[i]};  // the focus list where the walk was blocked
+  const size_t steps = random_walk(*this, pts_[i], K, C_[i], nav);
+  WorkerCounters& c = counters_[parlay::worker_id()];
+  c.focus_moves += nav.moves;
+  c.pointer_moves += K.moves;
+  return steps;
+}
+
+// Re-aligns the recorded pointers of F_i now that every target is finished
+// for this level. Slots are recorded in creation order, so when the previous
+// list also holds the target its pointer has been fixed already and is the
+// push-down start (radii decrease, so the answer only moves down from it);
+// otherwise the recorded start is used. A pointer that resolves to a
+// complete list is exact for good; one that lands in a tail stays recorded
+// unless the level is final.
+template <class Metric>
+void MetricSkipList<Metric>::fixup(idx_t i, bool final) {
+  parlay::sequence<uint32_t>& pend = pending_[i];
+  if (pend.empty()) return;
+  FingerLists& F = lists_[i];
+  size_t moves = 0, w = 0;
+  for (uint32_t s : pend) {
+    const idx_t k = s / alpha_;
+    const idx_t j = F.entries[s].idx;
+    const FingerLists& Fj = lists_[j];
+    idx_t from = F.adv[s];
+    if (k > 0) {
+      const Entry* P = F.begin(k - 1);
+      for (idx_t t = 0; t < alpha_; t++)
+        if (P[t].idx == j) {
+          from = F.adv_begin(k - 1)[t];
+          break;
+        }
+    }
+    const idx_t p = Fj.align(from, F.radius[k]);
+    moves += p > from ? p - from : from - p;
+    F.adv[s] = p;
+    if (!final && p >= Fj.num_complete()) pend[w++] = s;
+  }
+  pend.resize(w);
+  counters_[parlay::worker_id()].pointer_moves += moves;
 }
 
 }  // namespace mskip

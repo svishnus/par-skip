@@ -13,18 +13,20 @@ using namespace mskip;
 template <class Metric>
 static void run(const char* name, const parlay::sequence<typename Metric::point_type>& pts, idx_t alpha,
                 uint64_t seed, bool against_reference = false) {
+  for (bool advance : {false, true}) {
   MetricSkipList<Metric> seq(pts, alpha, Metric(), seed);
-  seq.build_sequential();
+  seq.build_sequential(advance);
   const BuildStats& ss = seq.stats();
   for (size_t base : {size_t(0), size_t(7), MetricSkipList<Metric>::kDefaultSeqBase}) {
     MetricSkipList<Metric> par(pts, alpha, Metric(), seed);
-    par.build_parallel(base);
+    par.build_parallel(base, advance);
     char what[160];
-    std::snprintf(what, sizeof what, "%s alpha=%u n=%u base=%zu", name, alpha, par.n(), base);
+    std::snprintf(what, sizeof what, "%s alpha=%u n=%u base=%zu advance=%d", name, alpha, par.n(), base, int(advance));
     CHECK_CTX(par.permutation() == seq.permutation(), "%s: permutations differ", what);
+    if (advance) CHECK_CTX(check::check_advance(par, what), "%s", what);
     size_t bad = 0;
     for (idx_t i = 0; i < par.n() && bad < 3; i++) {
-      if (!same_lists(par.lists(i), seq.lists(i))) {
+      if (!same_lists(par.lists(i), seq.lists(i), advance)) {
         bad++;
         CHECK_CTX(false, "%s: F_%u differs (par %u lists, seq %u lists)", what, i, par.lists(i).num_lists(),
                   seq.lists(i).num_lists());
@@ -42,9 +44,13 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
     // parallel one (never fewer iterations overall).
     CHECK_CTX(st.steps >= ss.steps, "%s: steps par=%zu seq=%zu", what, st.steps, ss.steps);
     if (base == 0)
-      std::printf("  %-20s alpha=%u n=%-6u merges=%-6zu forest depth: max=%zu mean=%.2f  steps par/seq=%.2f\n",
-                  name, alpha, par.n(), st.merges, st.max_forest_depth,
-                  st.merges ? double(st.layers) / st.merges : 0.0, ss.steps ? double(st.steps) / ss.steps : 0.0);
+      std::printf("  %-20s alpha=%u n=%-6u adv=%d merges=%-6zu forest depth: max=%zu mean=%.2f  steps par/seq=%.2f"
+                  "  align moves/step: focus par=%.2f seq=%.2f, pointers par=%.2f seq=%.2f\n",
+                  name, alpha, par.n(), int(advance), st.merges, st.max_forest_depth,
+                  st.merges ? double(st.layers) / st.merges : 0.0, ss.steps ? double(st.steps) / ss.steps : 0.0,
+                  st.steps ? double(st.focus_moves) / st.steps : 0.0, ss.steps ? double(ss.focus_moves) / ss.steps : 0.0,
+                  st.steps ? double(st.pointer_moves) / st.steps : 0.0, ss.steps ? double(ss.pointer_moves) / ss.steps : 0.0);
+  }
   }
 }
 
