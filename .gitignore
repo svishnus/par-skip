@@ -8,3 +8,7 @@ build/
 .vscode/
 .idea/
 compile_commands.json
+
+# tool-local (agent worktrees, clangd cache)
+.claude/
+.cache/
