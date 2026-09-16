@@ -12,10 +12,19 @@ template <class Metric>
 static void run(const char* name, const parlay::sequence<typename Metric::point_type>& pts, idx_t alpha,
                 uint64_t seed) {
   MetricSkipList<Metric> S(pts, alpha, Metric(), seed);
-  S.build_sequential();
+  S.build_sequential(false);  // Alg. 2: binary search, no pointers
   char what[128];
   std::snprintf(what, sizeof what, "%s alpha=%u n=%u", name, alpha, S.n());
   CHECK_CTX(check::matches_reference(S, what), "%s", what);
+  {
+    // Alg. 5: same lists and control points, plus advance pointers by definition
+    MetricSkipList<Metric> A(pts, alpha, Metric(), seed);
+    A.build_sequential(true);
+    CHECK_CTX(check::matches_reference(A, what), "%s (advance)", what);
+    CHECK_CTX(check::check_advance(A, what), "%s", what);
+    CHECK_CTX(A.control() == S.control() && A.control_list() == S.control_list(), "%s: control points differ between Alg. 2 and Alg. 5", what);
+    CHECK_CTX(A.stats().steps == S.stats().steps, "%s: walk lengths differ between Alg. 2 and Alg. 5", what);
+  }
   // control points: C[i] == i iff s_i has fewer than alpha successors;
   // otherwise the walk stopped at a tail list of F_{C[i]} at the radius the
   // last complete list of F_i implies.

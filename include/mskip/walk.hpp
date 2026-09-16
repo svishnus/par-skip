@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 
 #include "mskip/finger_list.hpp"
@@ -18,12 +19,40 @@ class MetricSkipList;
 //   idx_t hint(const FingerLists& F, idx_t k, idx_t e); // start index in F_j for entry e of list k
 //   void  hop(idx_t h);                                 // the walk moves to that entry's point
 //
-// Locates F* = F_cur(r) by binary search, as in Alg. 2/3. Phase 3 adds a
-// navigator based on advance pointers and align behind the same interface.
+// Locates F* = F_cur(r) by binary search, as in Alg. 2/3.
 struct BinarySearchNav {
   idx_t focus(const FingerLists& F, dist_t r) const { return F.locate(r); }
   idx_t hint(const FingerLists&, idx_t, idx_t) const { return 0; }
   void hop(idx_t) const {}
+};
+
+// Locates F* with the advance pointers and align (Alg. 4/5): k is the index
+// of the focus list in F_cur; the pointer of the chosen entry becomes the k
+// for the next focus point, and align corrects it to F(r). Tail lists carry
+// no pointers; their entries are a subset of the last complete list, whose
+// pointer is used instead (0 when the point has no complete list). moves
+// counts align steps; it is the cost the pointers save over binary search.
+struct AdvanceNav {
+  idx_t k = 0;
+  size_t moves = 0;
+  idx_t focus(const FingerLists& F, dist_t r) {
+    const idx_t k2 = F.align(k, r);
+    moves += k2 > k ? k2 - k : k - k2;
+    k = k2;
+    return k;
+  }
+  idx_t hint(const FingerLists& F, idx_t list, idx_t e) const {
+    if (F.is_complete(list)) return F.adv_begin(list)[e];
+    if (F.num_complete() == 0) return 0;
+    const idx_t j = F.begin(list)[e].idx;
+    const idx_t last = F.num_complete() - 1;
+    const Entry* L = F.begin(last);
+    for (idx_t t = 0; t < F.alpha; t++)
+      if (L[t].idx == j) return F.adv_begin(last)[t];
+    assert(false && "tail entry missing from the last complete list");
+    return 0;
+  }
+  void hop(idx_t h) { k = h; }
 };
 
 // Policy concept:

@@ -20,9 +20,11 @@ namespace mskip {
 
 // Counters kept by the builders (docs/PLAN.md section 6, "instrumentation").
 struct BuildStats {
-  size_t walks = 0;   // random walks started (resumes count again)
-  size_t steps = 0;   // iterations over all walks
-  size_t merges = 0;  // merge phases of the parallel build
+  size_t walks = 0;        // random walks started (resumes count again)
+  size_t steps = 0;        // iterations over all walks
+  size_t focus_moves = 0;    // align steps locating focus lists (advance mode)
+  size_t pointer_moves = 0;  // align steps settling advance pointers
+  size_t merges = 0;       // merge phases of the parallel build
   size_t layers = 0;  // control-forest layers over all merges
   size_t max_forest_depth = 0;  // deepest control forest of any merge
 };
@@ -44,11 +46,21 @@ class MetricSkipList {
     K_ = parlay::sequence<idx_t>(n_, idx_t{0});
   }
 
-  void build_sequential();  // Alg. 2: F_{n-1} down to F_0, one random walk each
-  // Alg. 6: divide and conquer with the control forest. Ranges of at most
-  // seq_base points (never fewer than alpha) form the sequential base case.
-  void build_parallel(size_t seq_base = kDefaultSeqBase);
+  // Alg. 5 (advance = true: focus lists found with advance pointers and
+  // align, and the pointers are stored) or Alg. 2 (binary search, no
+  // pointers): F_{n-1} down to F_0, one random walk each.
+  void build_sequential(bool advance = true);
+  // Alg. 6 (+ Sec. 5.5 when advance = true): divide and conquer with the
+  // control forest. Ranges of at most seq_base points (never fewer than
+  // alpha) form the sequential base case.
+  void build_parallel(size_t seq_base = kDefaultSeqBase, bool advance = true);
   static constexpr size_t kDefaultSeqBase = 1024;
+  bool has_advance() const { return advance_; }  // queries then use Alg. 4
+  size_t unresolved() const {                    // advance pointers not yet exact; 0 after a build
+    size_t total = 0;
+    for (const auto& p : pending_) total += p.size();
+    return total;
+  }
 
   idx_t nearest(const point_type& q) const;                              // original index
   parlay::sequence<idx_t> knn(const point_type& q, idx_t k) const;       // by distance, ties by priority
@@ -70,14 +82,23 @@ class MetricSkipList {
 
  private:
   struct BuildPolicy;  // build_seq.hpp
-  size_t build_point(idx_t i, idx_t r);
+  void reset(bool advance);
+  void finish_stats();
+  size_t build_point(idx_t i, idx_t r, idx_t settled_from);
   void provisional(idx_t i, idx_t r);
+  template <class Nav>
+  idx_t query_nearest(const point_type& q) const;  // query.hpp
+  template <class Nav>
+  void query_knn(const point_type& q, parlay::sequence<Entry>& K) const;
+  template <class Nav>
+  void query_range(const point_type& q, dist_t delta, parlay::sequence<idx_t>& out) const;
   void parallel_build(idx_t l, idx_t r);  // build_par.hpp
   void merge(idx_t l, idx_t m, idx_t r);
-  size_t resume(idx_t i, idx_t r);
+  size_t resume(idx_t i, idx_t m, idx_t r);
+  void fixup(idx_t i, bool final);
 
   struct alignas(64) WorkerCounters {  // per-worker BuildStats, summed at the end
-    size_t walks = 0, steps = 0, merges = 0, layers = 0, max_depth = 0;
+    size_t walks = 0, steps = 0, focus_moves = 0, pointer_moves = 0, merges = 0, layers = 0, max_depth = 0;
   };
 
   Metric metric_;
@@ -87,6 +108,8 @@ class MetricSkipList {
   parlay::sequence<point_type> pts_;   // in permutation order
   parlay::sequence<FingerLists> lists_;
   parlay::sequence<idx_t> C_, K_;
+  bool advance_ = false;
+  parlay::sequence<parlay::sequence<uint32_t>> pending_;  // per point: slots of adv not yet exact
   BuildStats stats_;
   std::vector<WorkerCounters> counters_;
   size_t seq_base_ = kDefaultSeqBase;

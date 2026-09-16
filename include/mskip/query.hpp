@@ -56,12 +56,36 @@ struct RangePolicy {
 }  // namespace detail
 
 template <class Metric>
+template <class Nav>
+idx_t MetricSkipList<Metric>::query_nearest(const point_type& q) const {
+  detail::NearestPolicy K{0, dist_to(0, q)};
+  Nav nav;
+  random_walk(*this, q, K, 0, nav);
+  return K.m;
+}
+
+template <class Metric>
+template <class Nav>
+void MetricSkipList<Metric>::query_knn(const point_type& q, parlay::sequence<Entry>& K) const {
+  dist_t rad = 0;
+  for (const Entry& x : K) rad = std::max(rad, x.dist);
+  detail::KnnPolicy P{K, rad};
+  Nav nav;
+  random_walk(*this, q, P, static_cast<idx_t>(K.size() - 1), nav);
+}
+
+template <class Metric>
+template <class Nav>
+void MetricSkipList<Metric>::query_range(const point_type& q, dist_t delta, parlay::sequence<idx_t>& out) const {
+  detail::RangePolicy P{delta, out};
+  Nav nav;
+  random_walk(*this, q, P, 0, nav);
+}
+
+template <class Metric>
 idx_t MetricSkipList<Metric>::nearest(const point_type& q) const {
   assert(n_ > 0);
-  detail::NearestPolicy K{0, dist_to(0, q)};
-  BinarySearchNav nav;
-  random_walk(*this, q, K, 0, nav);
-  return perm_[K.m];
+  return perm_[advance_ ? query_nearest<AdvanceNav>(q) : query_nearest<BinarySearchNav>(q)];
 }
 
 template <class Metric>
@@ -71,11 +95,8 @@ parlay::sequence<idx_t> MetricSkipList<Metric>::knn(const point_type& q, idx_t k
     return Entry{static_cast<idx_t>(e), dist_to(static_cast<idx_t>(e), q)};
   });
   if (k > 0 && k < n_) {
-    dist_t rad = 0;
-    for (const Entry& x : K) rad = std::max(rad, x.dist);
-    detail::KnnPolicy P{K, rad};
-    BinarySearchNav nav;
-    random_walk(*this, q, P, k - 1, nav);
+    if (advance_) query_knn<AdvanceNav>(q, K);
+    else query_knn<BinarySearchNav>(q, K);
   }
   std::sort(K.begin(), K.end(), [](const Entry& a, const Entry& b) { return farther(b, a); });
   return parlay::map(K, [&](const Entry& x) { return perm_[x.idx]; });
@@ -86,9 +107,8 @@ parlay::sequence<idx_t> MetricSkipList<Metric>::range(const point_type& q, dist_
   parlay::sequence<idx_t> out;
   if (n_ == 0) return out;
   if (dist_to(0, q) < delta) out.push_back(0);
-  detail::RangePolicy P{delta, out};
-  BinarySearchNav nav;
-  random_walk(*this, q, P, 0, nav);
+  if (advance_) query_range<AdvanceNav>(q, delta, out);
+  else query_range<BinarySearchNav>(q, delta, out);
   for (idx_t& x : out) x = perm_[x];
   return out;
 }

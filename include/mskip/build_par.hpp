@@ -4,10 +4,14 @@
 // blocked random walk at its control point C[i]. Walks that resume from the
 // same control point depend on it having been resumed first, so the left
 // half is processed layer by layer over the control forest.
+//
+// Advance pointers are not maintained by the parallel build yet (Sec. 5.5,
+// next phase): it always builds the binary-search structure.
 #pragma once
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 
 #include <parlay/parallel.h>
@@ -20,24 +24,12 @@
 namespace mskip {
 
 template <class Metric>
-void MetricSkipList<Metric>::build_parallel(size_t seq_base) {
-  stats_ = BuildStats();
+void MetricSkipList<Metric>::build_parallel(size_t seq_base, bool /*advance*/) {
+  reset(false);
   if (n_ == 0) return;
   seq_base_ = std::max<size_t>(seq_base, alpha_);
-  counters_.assign(parlay::num_workers(), WorkerCounters());
-  parlay::parallel_for(0, n_, [&](size_t i) {
-    lists_[i].clear();
-    C_[i] = static_cast<idx_t>(i);
-    K_[i] = 0;
-  });
   parallel_build(0, n_ - 1);
-  for (const WorkerCounters& c : counters_) {
-    stats_.walks += c.walks;
-    stats_.steps += c.steps;
-    stats_.merges += c.merges;
-    stats_.layers += c.layers;
-    stats_.max_forest_depth = std::max(stats_.max_forest_depth, c.max_depth);
-  }
+  finish_stats();
 }
 
 // Builds every F_i, i in [l, r], against s_{i+1..r}, leaving C[i] at the
@@ -48,7 +40,7 @@ void MetricSkipList<Metric>::parallel_build(idx_t l, idx_t r) {
   if (static_cast<size_t>(r - l) + 1 <= seq_base_) {
     WorkerCounters& c = counters_[parlay::worker_id()];
     for (idx_t i = r + 1; i-- > l;) {
-      c.steps += build_point(i, r);
+      c.steps += build_point(i, r, i + 1);
       c.walks++;
     }
     return;
@@ -77,7 +69,7 @@ void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
     depth++;
     parlay::parallel_for(0, frontier.size(), [&](size_t t) {
       WorkerCounters& c = counters_[parlay::worker_id()];
-      c.steps += resume(frontier[t], r);
+      c.steps += resume(frontier[t], m, r);
       c.walks++;
     }, 1);
     frontier = parlay::flatten(parlay::map(frontier, [&](idx_t f) {
@@ -94,11 +86,11 @@ void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
 // without a complete list (C[i] == i) starts from scratch, or stays
 // provisional if it still has fewer than alpha successors.
 template <class Metric>
-size_t MetricSkipList<Metric>::resume(idx_t i, idx_t r) {
-  if (C_[i] == i) return build_point(i, r);
+size_t MetricSkipList<Metric>::resume(idx_t i, idx_t m, idx_t r) {
+  if (C_[i] == i) return build_point(i, r, m + 1);
   FingerLists& F = lists_[i];
   F.truncate_tail();
-  BuildPolicy K{*this, i, F};
+  BuildPolicy K{*this, i, F, m + 1, true, nullptr};
   BinarySearchNav nav;
   return random_walk(*this, pts_[i], K, C_[i], nav);
 }

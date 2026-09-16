@@ -11,15 +11,15 @@ using namespace mskip;
 
 template <class Metric>
 static void run(const char* name, const parlay::sequence<typename Metric::point_type>& pts, idx_t alpha,
-                const parlay::sequence<typename Metric::point_type>& queries, uint64_t seed) {
+                const parlay::sequence<typename Metric::point_type>& queries, uint64_t seed, bool advance) {
   MetricSkipList<Metric> S(pts, alpha, Metric(), seed);
-  S.build_sequential();
+  S.build_sequential(advance);  // Alg. 4 queries (advance) or Alg. 3 queries
   const idx_t n = S.n();
   // original index -> permutation position, to compare with the brute force
   parlay::sequence<idx_t> pos(n);
   for (idx_t i = 0; i < n; i++) pos[S.permutation()[i]] = i;
   char what[128];
-  std::snprintf(what, sizeof what, "%s alpha=%u n=%u", name, alpha, n);
+  std::snprintf(what, sizeof what, "%s alpha=%u n=%u advance=%d", name, alpha, n, int(advance));
   size_t bad = 0;
   for (size_t t = 0; t < queries.size() && bad < 3; t++) {
     const auto& q = queries[t];
@@ -56,7 +56,14 @@ static void run(const char* name, const parlay::sequence<typename Metric::point_
     }
   }
   CHECK(bad == 0);
-  std::printf("  %-22s alpha=%u n=%-5u queries=%zu\n", name, alpha, n, queries.size());
+  if (advance) std::printf("  %-22s alpha=%u n=%-5u queries=%zu\n", name, alpha, n, queries.size());
+}
+
+template <class Metric>
+static void run(const char* name, const parlay::sequence<typename Metric::point_type>& pts, idx_t alpha,
+                const parlay::sequence<typename Metric::point_type>& queries, uint64_t seed) {
+  run<Metric>(name, pts, alpha, queries, seed, false);
+  run<Metric>(name, pts, alpha, queries, seed, true);
 }
 
 int main() {

@@ -56,6 +56,38 @@ std::string validate_point(const mskip::MetricSkipList<Metric>& S, mskip::idx_t 
   return validate_lists(S, i, S.lists(i));
 }
 
+// Advance pointers by definition: F_i[k].advance[j] is the index of
+// F_j(F_i[k].radius), for every entry of every complete list.
+template <class Metric>
+bool check_advance(const mskip::MetricSkipList<Metric>& S, const char* what) {
+  if (!S.has_advance()) {
+    std::fprintf(stderr, "%s: structure has no advance pointers\n", what);
+    return false;
+  }
+  if (S.unresolved() != 0) {
+    std::fprintf(stderr, "%s: %zu pointers still pending after the build\n", what, S.unresolved());
+    return false;
+  }
+  for (mskip::idx_t i = 0; i < S.n(); i++) {
+    const mskip::FingerLists& F = S.lists(i);
+    if (!F.has_adv || F.adv.size() != F.entries.size()) {
+      std::fprintf(stderr, "%s: F_%u adv array\n", what, i);
+      return false;
+    }
+    for (mskip::idx_t k = 0; k < F.num_complete(); k++)
+      for (mskip::idx_t e = 0; e < F.alpha; e++) {
+        const mskip::idx_t j = F.begin(k)[e].idx;
+        const mskip::idx_t want = S.lists(j).locate(F.radius[k]);
+        if (F.adv_begin(k)[e] != want) {
+          std::fprintf(stderr, "%s: F_%u[%u].advance[%u] = %u, F_%u(%g) is list %u\n", what, i, k, j,
+                       F.adv_begin(k)[e], j, static_cast<double>(F.radius[k]), want);
+          return false;
+        }
+      }
+  }
+  return true;
+}
+
 // Every point of S: structure valid and bit-identical to the reference.
 template <class Metric>
 bool matches_reference(const mskip::MetricSkipList<Metric>& S, const char* what) {
