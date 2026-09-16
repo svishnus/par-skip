@@ -3,8 +3,10 @@
 // helpers here are shared with the parallel build.
 #pragma once
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include <parlay/sequence.h>
 
@@ -32,22 +34,31 @@ struct MetricSkipList<Metric>::BuildPolicy {
   MetricSkipList& S;
   idx_t i;
   FingerLists& F;
-  idx_t settled_from;  // targets >= settled_from may be read now
-  bool final;          // every readable target is complete for good
+  idx_t settled_from;   // targets >= settled_from may be read now
+  bool targets_final;   // every readable target is complete for good
   parlay::sequence<uint32_t>* pending;
-  size_t moves = 0;  // align steps spent on pointers
+  size_t moves = 0;     // align steps spent on pointers
+  size_t deferred = 0;  // pointers left unaligned (target not readable)
 
   dist_t radius() const { return F.radius.back(); }
 
+  // A pointer that lands in the tail of a target whose lists may still grow
+  // is not exact yet.
+  static bool still_pending(const FingerLists& Fj, idx_t p, bool targets_final) {
+    return !targets_final && p >= Fj.num_complete();
+  }
+
   idx_t settle(idx_t j, idx_t from, dist_t rho, size_t slot) {
+    assert(slot <= std::numeric_limits<uint32_t>::max());
     if (j < settled_from) {
       pending->push_back(static_cast<uint32_t>(slot));
+      deferred++;
       return from;
     }
     const FingerLists& Fj = S.lists_[j];
     const idx_t p = Fj.align(from, rho);
     moves += p > from ? p - from : from - p;
-    if (!final && p >= Fj.num_complete()) pending->push_back(static_cast<uint32_t>(slot));
+    if (still_pending(Fj, p, targets_final)) pending->push_back(static_cast<uint32_t>(slot));
     return p;
   }
 
@@ -124,6 +135,7 @@ size_t MetricSkipList<Metric>::build_point(idx_t i, idx_t r, idx_t settled_from)
   WorkerCounters& c = counters();
   c.focus_moves += nav.moves;
   c.pointer_moves += K.moves;
+  c.pointers_deferred += K.deferred;
   return steps;
 }
 
@@ -151,6 +163,9 @@ void MetricSkipList<Metric>::finish_stats() {
     stats_.steps += c.steps;
     stats_.focus_moves += c.focus_moves;
     stats_.pointer_moves += c.pointer_moves;
+    stats_.pointers_deferred += c.pointers_deferred;
+    stats_.pointers_refixed += c.pointers_refixed;
+    stats_.pointers_kept += c.pointers_kept;
     stats_.merges += c.merges;
     stats_.layers += c.layers;
     stats_.max_forest_depth = std::max(stats_.max_forest_depth, c.max_depth);
@@ -167,6 +182,7 @@ void MetricSkipList<Metric>::build_sequential(bool advance) {
     c.walks += steps > 0;
   }
   finish_stats();
+  assert(unresolved() == 0);
 }
 
 }  // namespace mskip

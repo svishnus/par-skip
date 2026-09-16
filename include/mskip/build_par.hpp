@@ -12,7 +12,10 @@
 // tail of a target whose lists still grow are provisional; both are recorded
 // per point and re-aligned after the merge (see fixup). This replaces the
 // paper's advance tree: every pointer is touched once per level at most, and
-// the walks never wait for a pointer.
+// the walks never wait for a pointer. Every stored index stays valid because
+// no F_j is read while it is rebuilt (a point rebuilt from provisional is a
+// root, and roots read only right-half lists) and every rebuild ends with at
+// least as many lists as before.
 #pragma once
 
 #include <algorithm>
@@ -35,6 +38,7 @@ void MetricSkipList<Metric>::build_parallel(size_t seq_base, bool advance) {
   seq_base_ = std::max<size_t>(seq_base, alpha_);
   if (n_ > 0) parallel_build(0, n_ - 1);
   finish_stats();
+  assert(unresolved() == 0);
 }
 
 // Builds every F_i, i in [l, r], against s_{i+1..r}, leaving C[i] at the
@@ -87,8 +91,8 @@ void MetricSkipList<Metric>::merge(idx_t l, idx_t m, idx_t r) {
     }));
   }
   if (advance_) {
-    const bool final = r == n_ - 1;
-    parlay::parallel_for(0, cnt, [&](size_t t) { fixup(static_cast<idx_t>(l + t), final); });
+    const bool targets_final = r == n_ - 1;
+    parlay::parallel_for(0, cnt, [&](size_t t) { fixup(static_cast<idx_t>(l + t), targets_final); });
   }
   WorkerCounters& c = counters();
   c.merges++;
@@ -107,6 +111,7 @@ size_t MetricSkipList<Metric>::resume(idx_t i, idx_t m, idx_t r) {
   FingerLists& F = lists_[i];
   F.truncate_tail();
   assert(F.num_complete() > 0);
+  assert(control_list_[i] < lists_[control_[i]].num_lists());  // lists never shrink
   if (!advance_) {
     BuildPolicy K{*this, i, F, m + 1, true, nullptr};
     BinarySearchNav nav;
@@ -118,42 +123,45 @@ size_t MetricSkipList<Metric>::resume(idx_t i, idx_t m, idx_t r) {
   WorkerCounters& c = counters();
   c.focus_moves += nav.moves;
   c.pointer_moves += K.moves;
+  c.pointers_deferred += K.deferred;
   return steps;
 }
 
 // Re-aligns the recorded pointers of F_i now that every target is finished
 // for this level. Slots are recorded in creation order, so when the previous
-// list also holds the target its pointer has been fixed already and is the
-// push-down start (radii decrease, so the answer only moves down from it);
-// otherwise the recorded start is used. A pointer that resolves to a
+// list also holds the target (every entry but the evictor, at the same
+// position or one to the right) its pointer has been fixed already and is
+// the push-down start: radii decrease, so the answer only moves down from
+// it. Otherwise the recorded start is used. A pointer that resolves to a
 // complete list is exact for good; one that lands in a tail stays recorded
 // unless the level is final.
 template <class Metric>
-void MetricSkipList<Metric>::fixup(idx_t i, bool final) {
+void MetricSkipList<Metric>::fixup(idx_t i, bool targets_final) {
   parlay::sequence<uint32_t>& pend = pending_[i];
   if (pend.empty()) return;
   FingerLists& F = lists_[i];
   size_t moves = 0, w = 0;
   for (uint32_t s : pend) {
     const idx_t k = s / alpha_;
+    const idx_t e = s - k * alpha_;
     const idx_t j = F.entries[s].idx;
     const FingerLists& Fj = lists_[j];
     idx_t from = F.adv[s];
-    if (k > 0) {
-      const Entry* P = F.begin(k - 1);
-      for (idx_t t = 0; t < alpha_; t++)
-        if (P[t].idx == j) {
-          from = F.adv_begin(k - 1)[t];
-          break;
-        }
+    if (k > 0 && e + 1 < alpha_) {  // kept from list k-1 (the evictor sits at alpha-1)
+      const idx_t t = F.begin(k - 1)[e].idx == j ? e : e + 1;
+      assert(F.begin(k - 1)[t].idx == j);
+      from = F.adv_begin(k - 1)[t];
     }
     const idx_t p = Fj.align(from, F.radius[k]);
     moves += p > from ? p - from : from - p;
     F.adv[s] = p;
-    if (!final && p >= Fj.num_complete()) pend[w++] = s;
+    if (BuildPolicy::still_pending(Fj, p, targets_final)) pend[w++] = s;
   }
+  WorkerCounters& c = counters();
+  c.pointer_moves += moves;
+  c.pointers_refixed += pend.size();
+  c.pointers_kept += w;
   pend.resize(w);
-  counters().pointer_moves += moves;
 }
 
 }  // namespace mskip

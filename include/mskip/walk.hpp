@@ -31,7 +31,7 @@ struct BinarySearchNav {
 // for the next focus point, and align corrects it to F(r). Tail lists carry
 // no pointers; their entries are a subset of the last complete list, whose
 // pointer is used instead (0 when the point has no complete list). moves
-// counts align steps; it is the cost the pointers save over binary search.
+// counts align steps: the cost paid instead of a binary search per step.
 struct AdvanceNav {
   idx_t k = 0;
   size_t moves = 0;

@@ -28,6 +28,9 @@ struct BuildStats {
   size_t steps = 0;          // iterations over all walks
   size_t focus_moves = 0;    // align steps locating focus lists (advance mode)
   size_t pointer_moves = 0;  // align steps settling advance pointers
+  size_t pointers_deferred = 0;  // pointers into a possibly-busy target, aligned later (parallel)
+  size_t pointers_refixed = 0;   // pending slots re-aligned by fixup (parallel)
+  size_t pointers_kept = 0;      // of those, still pending afterwards
   size_t merges = 0;         // merge phases of the parallel build
   size_t layers = 0;         // control-forest layers over all merges
   size_t max_forest_depth = 0;  // deepest control forest of any merge
@@ -138,7 +141,9 @@ class MetricSkipList {
   // its own entry (looked up after every call that may fork), so this needs
   // no atomics under child- or continuation-stealing schedulers.
   struct alignas(64) WorkerCounters {
-    size_t walks = 0, steps = 0, focus_moves = 0, pointer_moves = 0, merges = 0, layers = 0, max_depth = 0;
+    size_t walks = 0, steps = 0, focus_moves = 0, pointer_moves = 0;
+    size_t pointers_deferred = 0, pointers_refixed = 0, pointers_kept = 0;
+    size_t merges = 0, layers = 0, max_depth = 0;
   };
   WorkerCounters& counters() { return counters_[parlay::worker_id()]; }
 
