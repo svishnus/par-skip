@@ -1,0 +1,51 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  make:
+    name: make test (${{ matrix.os }}, ${{ matrix.cxx }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, cxx: g++ }
+          - { os: ubuntu-latest, cxx: clang++ }
+          - { os: macos-latest, cxx: clang++ }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: build and run tests
+        run: make -j4 CXX=${{ matrix.cxx }} test
+      - name: build benchmarks and examples
+        run: make -j4 CXX=${{ matrix.cxx }} bench examples && build/examples/custom_metric 20000
+      - name: single-worker run
+        run: PARLAY_NUM_THREADS=1 build/tests/test_build_par
+
+  cmake:
+    name: cmake (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: configure
+        run: cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release
+      - name: build
+        run: cmake --build build-cmake -j4
+      - name: test
+        run: ctest --test-dir build-cmake --output-on-failure
+      - name: install and consume the package
+        run: |
+          cmake --install build-cmake --prefix "$PWD/prefix"
+          cmake -S examples/consumer -B build-consumer -DCMAKE_PREFIX_PATH="$PWD/prefix"
+          cmake --build build-consumer
+          ./build-consumer/consumer
