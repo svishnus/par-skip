@@ -20,7 +20,7 @@ ifdef DEBUG
 else ifdef TSAN
   override CXXFLAGS += -O1 -g -fsanitize=thread -fno-omit-frame-pointer
   override LDFLAGS  += -fsanitize=thread
-  export TSAN_OPTIONS ?= suppressions=$(CURDIR)/tests/tsan.supp
+  export TSAN_OPTIONS ?= suppressions=$(CURDIR)/tests/tsan.supp:abort_on_error=0
 else
   override CXXFLAGS += -O3 -march=native -DNDEBUG
 endif
