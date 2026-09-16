@@ -73,35 +73,68 @@ template <int D> struct L2 / L1 / Linf;
 // finger_list.hpp
 struct Entry { idx_t idx; dist_t dist; };       // dist = d(s_i, s_idx), cached
 
-// All finger lists of one point. List k occupies entries[k*alpha, k*alpha + size[k]).
+// One list, materialized: entries in idx order plus, per entry, the slot of
+// its stored advance pointer.
+struct ListBuf { Entry ent[kMaxAlpha]; uint32_t src[kMaxAlpha]; idx_t size; };
+
+// All finger lists of one point, in one buffer (a slice of the structure's
+// slab, or its own allocation once it outgrows the slice).
 struct FingerLists {
   idx_t alpha;
-  idx_t n_complete;                   // lists [0, n_complete) are complete; the rest is the tail
+  idx_t stride;                       // lists 0, stride, 2 stride, ... are stored in full (checkpoints)
   bool  has_adv;                      // advance pointers are maintained (Phase 3/4)
-  parlay::sequence<dist_t>  radius;   // radius[k] = max dist in list k, 0 if empty; non-increasing
-  parlay::sequence<uint8_t> size;     // size[k] <= alpha; == alpha iff complete
-  parlay::sequence<Entry>   entries;  // alpha-stride; each list sorted by idx ascending
-  parlay::sequence<idx_t>   adv;      // alpha-stride, parallel to entries: adv[k*alpha+e] is the index
-                                      // of F_j(radius[k]) in F_j, j = entries[k*alpha+e].idx.
-                                      // Only complete lists carry pointers (see section 3).
+  // sections of the buffer (accessors; see layout()):
+  //   radius[k]      every list, complete and tail; non-increasing, contiguous for locate/align
+  //   checkpoint(b)  list b*stride in full (alpha entries)
+  //   evictor(k), evicted(k)   for 1 <= k < n_complete: list k = list k-1 minus the entry in
+  //                  slot evicted(k) of its block, plus evictor(k) appended (1 byte + 8 bytes)
+  //   adv_at(slot)   pointers of the stored entries only: every entry of a checkpoint list and
+  //                  the evictor of every other complete list, in creation order (adv_slot)
+  //   tail base      the last stored list once more, with each entry's slot and the rank at
+  //                  which it drops out of the tail (tail lists are never stored)
 
-  idx_t num_lists() const;
-  idx_t num_complete() const;
-  parlay::slice<const Entry*, const Entry*> list(idx_t k) const;
+  idx_t num_lists() const; idx_t num_complete() const; idx_t size(idx_t k) const;  // derived
+  template <bool WithSrc> void materialize(idx_t k, ListBuf& L) const;  // O(alpha + stride), see below
   idx_t locate(dist_t r) const;                     // F_i(r): first k with radius[k] <= r; binary search
   idx_t align(idx_t k, dist_t r) const;             // same result, walking up/down from k (Alg. 4)
-  void  push_back(const Entry* first, idx_t sz);    // computes radius; asserts sorted-by-idx, sz <= alpha
+  void  push_first(const Entry* first, idx_t sz);   // list 0 (sz < alpha only for the last points)
+  void  push_evict(ListBuf& last, idx_t f, Entry ev); // list = last minus position f plus ev; updates last
   void  truncate_tail();                            // drop every list with size < alpha
   void  build_tail();                               // from the last list, repeatedly remove the farthest
-                                                    // (tie rule) and push, until the empty list is pushed
+                                                    // (tie rule): stores the ranks and the radii
   std::string validate(idx_t owner) const;          // structural invariants, "" if they hold
 };
 ```
 
-Why `alpha`-stride with explicit sizes: `F_i[k]` is O(1)-addressable, `radius`
-is a contiguous array for binary search, and tail lists need no padding logic.
-Memory is inherently Θ(α² ln n) entries per point (α entries × α ln n lists);
-fine up to n ≈ 10⁵ at α = 8, or 10⁶ at α ≤ 4. Compaction is a Phase 5 concern.
+Why deltas with checkpoints (Phase 5): consecutive complete lists differ by
+one entry (the farthest is replaced by the evictor, which has the largest
+index and is appended), so a list costs 4 (radius) + 8 (evictor) + 1 (slot
+evicted) + 4 (the evictor's pointer) bytes plus a full copy every `stride`
+lists, Θ(α ln n) per point instead of the Θ(α² ln n) of the alpha-stride
+layout used through Phase 4 (5 + 12α bytes per list). A materialized list is
+the live subset of its block's slots (the α checkpoint entries followed by
+the block's evictors, already in idx order), so replaying a block is two bit
+operations per delta on a 64-bit live mask (up to 256 slots use four words)
+and one gather; the delta stores the *slot* it kills rather than the
+position, which is why no shifting is needed. Tail lists are derived from the
+last stored list by dropping its farthest entries; the tail base keeps that
+list with each entry's drop-out rank so a tail list is an O(α) filter. The
+walk materializes one list per step into a stack buffer. Advance pointers
+are stored only where an entry is stored (checkpoint entries and evictors),
+so a hint can be up to `stride - 1` lists old: still a valid index, `align`
+corrects it (measured: 2.5 → 3.8 focus moves per step at α = 4, stride 8).
+The alternative, only the evictor's pointer per list, would need each
+checkpoint entry's birth list (4 bytes, the same as a pointer) and give
+older hints, so it is dominated. Default `stride = max(α, 8)`, capped at
+257 − α so the killed slot fits a byte; `MetricSkipList::set_checkpoint_stride`
+tunes it.
+
+Buffers: the structure reserves one slab for all points, each point getting
+room for its expected number of stored lists plus two standard deviations
+(`reserve_lists`: the evictor count is a sum of Bernoullis), so about 1 % of
+the points ever grow into a buffer of their own and the allocator's
+power-of-two rounding is not paid per point; the resident set is ≈ 1.3× the
+logical size plus the points.
 
 ```cpp
 // metric_skip_list.hpp (to write)
@@ -149,8 +182,9 @@ State: focus point `cur`, a candidate set `K` (policy object), a target `q`.
 //                                                 // hint = start index in F_j for its advance pointer
 //   void   stop(idx_t cur, idx_t k);              // called once when the walk terminates at F_cur[k]
 // Nav concept (how F* is found):
+//   static constexpr bool kHints;                       // the materialized list needs its pointer slots
 //   idx_t focus(const FingerLists& F, dist_t r);        // index of F(r)
-//   idx_t hint(const FingerLists& F, idx_t k, idx_t e); // start index in F_j for entry e of list k
+//   idx_t hint(const FingerLists& F, const ListBuf& L, idx_t e); // start index in F_j for entry e of the focus list
 //   void  hop(idx_t h);                                 // the walk moves to that entry's point
 template <class Metric, class Policy, class Nav>
 size_t random_walk(const MetricSkipList<Metric>& S, const point_type& q, Policy& K, idx_t cur, Nav& nav);
@@ -169,7 +203,7 @@ random_walk(q, K, cur):
   loop:
     dc  = d(s_cur, q)
     r   = (dc + max(K.radius(), dc)) * (1 + slack)   // ball around cur that must contain any improvement
-    L   = F_cur.list(F_cur.locate(r))       // F* in the paper
+    L   = F_cur.materialize(F_cur.locate(r)) // F* in the paper
     thr = max(K.radius(), dc)
     nxt = none
     for e in L in ascending idx:            // "first j with the property" = highest priority
@@ -372,13 +406,16 @@ During a resumed walk of `i` in `merge(l, m, r)` (`BuildPolicy::settle`):
   within the merge: every hop of a resumed walk lands in `(m, r]`.
 
 After the last layer of the merge, `fixup(i)` runs in parallel over
-`i ∈ [l, m]`: each pending slot is re-`align`ed (from the previous list's
-pointer for the same target when there is one — the push-down; entry `e` of
-list `k` is entry `e` or `e+1` of list `k-1` unless it is the evictor — so a
-chain of deferred copies costs O(distance + length), not
-O(distance × length)); slots that resolve to a complete list, or any slot when
-`r == n-1`, leave the pending list. Pending slots stay in creation (= slot)
-order, so the previous list's pointer has been fixed when a slot is reached.
+`i ∈ [l, m]`: each pending slot is re-`align`ed (from the same target's most
+recent earlier stored pointer when there is one — the push-down: for an
+entry of a checkpoint list that is its evictor slot within the block, or its
+slot in the previous checkpoint, `FingerLists::prev_slot` — so a chain of
+deferred copies costs O(distance + length), not O(distance × length)); slots
+that resolve to a complete list, or any slot when `r == n-1`, leave the
+pending list. Pending slots stay in creation (= slot) order, so the earlier
+pointer has been fixed when a slot is reached. Since Phase 5 only checkpoint
+entries and evictors have slots, so the pending lists are about `stride`
+times shorter than with a pointer per entry per list.
 After the top-level merge every pointer equals `F_j.locate(radius)` (tested:
 bit-identical to the sequential Alg. 5 build over 1350 small configurations
 and the large inputs of `test_build_par`; `BuildStats` counts deferred,
@@ -404,6 +441,7 @@ argument of Alg. 6 is unchanged.
 | `test_build_par` | parallel == sequential, exactly; n up to 10⁵; also under `PARLAY_NUM_THREADS=1`, `SEQ=1`, and `DEBUG=1` (ASan/UBSan); records control-forest depth |
 | `test_stats` | lists per point vs α·H_n, walk length vs log n (sanity, loose bounds) |
 | `test_adversarial` | explicit (non-random) permutations: every point an evictor of `s_0`, sorted input without evictors, exponential gaps giving a control forest of depth n/α; all builders agree and queries stay exact |
+| `test_layout` | the compact storage: structure independent of the checkpoint stride, all builders bit-identical (pointers included) at strides 1, 2, α, 2α and the maximum, rebuilds across strides, the stride limit, memory ≤ 30 bytes per list + 20α per point, ~1 % of the points grow past their slab slice |
 
 Advance pointers are checked by definition (`check_advance`: every pointer of
 every complete list equals `F_j.locate(radius)`, none pending) after the
@@ -441,20 +479,38 @@ shuffles with `parlay::random_permutation(seed)`.
 | 2 | done | G, test_build_par, bench | `feat(par): divide-and-conquer construction with control forest`, `test(par): parallel build matches sequential`, `bench: construction and query benchmarks` |
 | 3 | done | advance/align, sequential (Alg. 4/5) | `feat(core): advance pointers and align` |
 | 4 | done | advance/align, parallel (section 6.1; the arXiv full version's Alg. 7 was consulted) | `feat(par): maintain advance pointers in parallel build` |
-| 5 | started | tuning: per-point reservation of the list arrays (done: resident set 3.3× → 1.9× logical, 1e6 build 2.0 → 1.2 s), α sweep, layout compaction, cache layout | `perf: reserve per-point list arrays for the expected list count`, `perf: ...` |
+| 5 | done | tuning: per-point reservation of the list arrays (resident set 3.3× → 1.9× logical, 1e6 build 2.0 → 1.2 s), then the compact layout of section 2 (deltas + checkpoints, one buffer per point in a slab) | `perf: reserve per-point list arrays for the expected list count`, `perf(core): compact list storage with deltas and checkpoints` |
 
 Two independent review rounds (after Phase 2 and after Phase 4) produced the
 `fix(core)` rounding-slack and double-accumulation commits, the `fix(api)`
 run-time checks, the Makefile `override`/`TSAN=1` change, the adversarial
 and stress tests, and the `refactor(par)` of `fixup`.
 
-Phase 5 notes from the measurements so far: the walk length is Θ(α ln n)
-(every evictor is visited: ≈ 46 of 77 steps per point at n = 4·10⁵, α = 4),
-and the time per step doubles from n = 2.5·10⁴ to 4·10⁵ because the
-alpha-stride structure (≈ 1.5 KB per point at α = 4, ≈ 7 KB at α = 8 plus
-pointers) is walked at random — compaction is the first thing to try. With
-α ≤ 8 the walks are far longer than log n in 3D/8D (the analysis needs
-α ≥ 16c³, c ≈ 2^D); queries stay exact, only the cost bound is lost.
+Phase 5 notes. The walk length is Θ(α ln n) (every evictor is visited:
+≈ 46 of 77 steps per point at n = 4·10⁵, α = 4), and with the alpha-stride
+layout the time per step doubled from n = 2.5·10⁴ to 4·10⁵ because the
+structure (≈ 2.5 KB per point at α = 4 with pointers, ≈ 8 KB at α = 8) is
+walked at random. The compact layout (uniform 2D, L2, 14 workers, with
+pointers; α = 4 from bench/results/history.csv, α = 8 measured the same way):
+
+| | α = 4, n = 10⁶ | α = 8, n = 2·10⁵ |
+|---|---|---|
+| logical size per point | 2.54 KB → 1.07 KB (2.4×) | 7.9 KB → 2.2 KB (3.6×) |
+| peak resident set | 4.78 GB → 1.77 GB (2.7×) | 3.0 GB → 0.68 GB (4.4×) |
+| parallel build | 1.65 s → 1.30 s | 0.49 s → 0.29 s |
+| nearest neighbor, M/s | 1.64 → 1.77 | 5.2 → 5.2 |
+| 10 nearest neighbors, M/s | 0.27 → 0.25 | 0.60 → 0.60 |
+
+The build gains come from the cache footprint and from settling pointers
+only for stored entries (pointer overhead over the binary-search build:
+1.45× → 1.12×; the build with pointers now takes as long as the Alg. 6 build
+without them did). The one regression, 10-NN at α = 4 with pointers, is the
+older hints (focus-align moves per step 2.5 → 3.8); the binary-search mode
+is at parity, so the materialization itself is free. Stride sweep at α = 4:
+stride 4 costs 23 % more memory for the same times, stride 16 saves 11 %
+with hints twice as old; at α = 8: stride 4 costs 37 % more memory for the
+same times, stride 16 saves 19 % for ≈ 5 % slower queries. With α ≤ 8 the walks are far longer than log n in 3D/8D (the analysis
+needs α ≥ 16c³, c ≈ 2^D); queries stay exact, only the cost bound is lost.
 
 ---
 
@@ -468,4 +524,6 @@ pointers) is walked at random — compaction is the first thing to try. With
 * Resolved (Phase 4): pointers are settled by per-point pending lists and a
   fix-up pass after each merge (section 6.1) instead of the paper's advance
   tree; the walk is unchanged from Alg. 6.
-* Memory compaction (slot-history representation) only if needed in Phase 5.
+* Resolved (Phase 5): the lists are stored as deltas with checkpoints
+  (section 2); pointers only for stored entries, so the walk's hints are up
+  to `stride - 1` lists old and `align` pays for it.

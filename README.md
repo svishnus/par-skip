@@ -59,7 +59,8 @@ ParlayLib's `include/` (plus `-pthread` on Linux); everything is in
 | `nearest(q)`, `nearest_dist(q)` | the closest point (ties: the one earliest in the permutation) |
 | `knn(q, k)`, `knn_dist(q, k)` | the `min(k, n)` closest, by distance then priority |
 | `range(q, delta)`, `range_dist(q, delta)` | every point with `d < delta`, in discovery order |
-| `n()`, `alpha()`, `permutation()`, `lists(i)`, `stats()`, `memory_bytes()` | introspection |
+| `set_checkpoint_stride(s)` | how often a list is stored in full (default `max(alpha, 8)`); smaller is faster, larger is smaller |
+| `n()`, `alpha()`, `permutation()`, `lists(i)`, `stats()`, `memory_bytes()`, `allocated_bytes()` | introspection |
 
 Queries are exact for every `alpha` and safe to call concurrently once a
 build has finished. Errors are exceptions: `std::invalid_argument` for a bad
@@ -67,9 +68,13 @@ build has finished. Errors are exceptions: `std::invalid_argument` for a bad
 
 **Choosing alpha.** Each point keeps, for every radius, the `alpha`
 highest-priority points inside that radius. Bigger `alpha` means shorter
-walks but Θ(α² ln n) memory per point: about 1.5 KB at `alpha = 4`, 7 KB at
-`alpha = 8`. 4–8 is a good range for 2D/3D data; higher dimensions want more
-(the paper's analysis needs `alpha` to grow with the expansion rate).
+walks but more lists per point: about 21 bytes per list plus a full copy
+every `stride` lists, i.e. Θ(α ln n) per point — about 1.1 KB at
+`alpha = 4` and 2.2 KB at `alpha = 8` for 10⁶ / 2·10⁵ points (the resident
+set is ≈ 1.6× that during the build; `build_parallel(seq_base, false)`
+drops the pointers and saves a further quarter). 4–8 is a good range for
+2D/3D data; higher dimensions want more (the paper's analysis needs `alpha`
+to grow with the expansion rate).
 
 **Custom metrics.** A metric is a type with `point_type`,
 `dist_t operator()(const point_type&, const point_type&) const` and
@@ -97,18 +102,25 @@ with `bench/history.sh && python3 bench/plot.py` (raw numbers in
 
 What the figures say:
 
-* The parallel build is 10–15× faster than the sequential algorithm on 14
-  cores at n = 10⁶ (1.7 s vs 21 s), and beats it on a single worker, too: the
+* The parallel build is 15× faster than the sequential algorithm on 14
+  cores at n = 10⁶ (1.3 s vs 20 s), and beats it on a single worker, too: the
   divide-and-conquer order is friendlier to the caches. Scaling flattens past
-  8 workers because the build is bound by memory traffic over a structure of
-  a few gigabytes.
+  8 workers because the build is bound by memory traffic (the structure is
+  walked at random).
 * Advance pointers (the paper's Sec. 4/5.5) make nearest-neighbor queries
-  ≈ 18 % faster and 10-NN queries ≈ 10 % faster; they cost ≈ 40 % more build
-  time and ≈ 25 % more memory. `build_parallel(seq_base, false)` skips them
+  ≈ 5–15 % faster and 10-NN queries ≈ 10 % faster; they cost ≈ 20 % more
+  build time and ≈ 25 % more memory. `build_parallel(seq_base, false)` skips them
   if construction time or memory matters more than query time.
-* The last milestone reserves each point's arrays once instead of growing
-  them, which took the peak memory from 7.4 KB to 4.7 KB per point and the
-  build from 2.6 s to 1.7 s.
+* Reserving each point's lists once instead of growing them took the peak
+  memory from 7.4 KB to 4.7 KB per point and the build from 2.6 s to 1.7 s.
+* The compact list storage (consecutive lists differ by one entry, so a
+  list is stored as that difference, with a full copy every few lists) took
+  the lists from 2.5 KB to 1.1 KB per point at `alpha = 4` (7.9 KB to 2.2 KB
+  at `alpha = 8`), the peak memory from 4.7 KB to 1.7 KB per point, and the
+  build from 1.65 s to 1.3 s, as fast as the build without pointers was;
+  nearest-neighbor queries are unchanged, 10-NN queries at `alpha = 4` are
+  ≈ 7 % slower because only every eighth list carries pointers for all its
+  entries (`set_checkpoint_stride` trades that against memory).
 
 Two caveats worth knowing: with a small `alpha` in higher dimensions, and
 for queries far from all the data, the walks get long (hundreds of steps);
@@ -137,6 +149,11 @@ highest-priority points within that radius, where priority is a random
 permutation. A query is a random walk over these lists that halves its
 distance rank in expectation at every step. Construction is the same walk
 run for each point over the lists of the points after it.
+
+Consecutive lists of a point differ by one entry, so a point stores its first
+list in full and then, per list, the entry that came in and the one it
+replaced, with a full copy every few lists; a list is rebuilt from the
+nearest copy with a few bit operations when the walk reads it.
 
 The parallel construction splits the permutation in half, builds both halves
 in parallel, then completes the left half against the right half by resuming
