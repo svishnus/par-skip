@@ -2,6 +2,7 @@
 #   make test        build + run all tests
 #   make test-all    tests with the default scheduler, one worker, SEQ=1 and DEBUG=1
 #   make bench       build benchmarks
+#   make examples    build examples into build/examples/
 #   make SEQ=1 ...   compile with PARLAY_SEQUENTIAL (single-threaded, easier debugging)
 #   make DEBUG=1 ... -O0 -g with ASan/UBSan
 #   make TSAN=1 ...  -O1 -g with ThreadSanitizer (ParlayLib's own reports suppressed)
@@ -30,17 +31,18 @@ endif
 
 BUILD   := build
 HEADERS := $(wildcard include/mskip/*.hpp)
-TESTS   := $(patsubst tests/%.cpp,$(BUILD)/tests/%,$(wildcard tests/*.cpp))
-BENCHES := $(patsubst bench/%.cpp,$(BUILD)/bench/%,$(wildcard bench/*.cpp))
+TESTS    := $(patsubst tests/%.cpp,$(BUILD)/tests/%,$(wildcard tests/*.cpp))
+BENCHES  := $(patsubst bench/%.cpp,$(BUILD)/bench/%,$(wildcard bench/*.cpp))
+EXAMPLES := $(patsubst examples/%.cpp,$(BUILD)/examples/%,$(wildcard examples/*.cpp))
 
 # clangd/IntelliSense: compile_commands.json is regenerated whenever a source is
 # added or the flags change. Headers get their own entries (-x c++) so clangd
 # parses them with the right flags instead of guessing from a nearby .cpp.
-COMPDB_SRCS := $(wildcard tests/*.cpp bench/*.cpp)
+COMPDB_SRCS := $(wildcard tests/*.cpp bench/*.cpp examples/*.cpp)
 COMPDB      := compile_commands.json
 
-.PHONY: all test test-all bench clean compile_commands
-all: $(COMPDB) $(TESTS) $(BENCHES)
+.PHONY: all test test-all bench examples clean compile_commands
+all: $(COMPDB) $(TESTS) $(BENCHES) $(EXAMPLES)
 
 compile_commands: $(COMPDB)
 
@@ -63,7 +65,10 @@ $(BUILD)/tests/%: tests/%.cpp $(HEADERS) | $(BUILD)/tests
 $(BUILD)/bench/%: bench/%.cpp $(HEADERS) | $(BUILD)/bench
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-$(BUILD)/tests $(BUILD)/bench:
+$(BUILD)/examples/%: examples/%.cpp $(HEADERS) | $(BUILD)/examples
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
+
+$(BUILD)/tests $(BUILD)/bench $(BUILD)/examples:
 	mkdir -p $@
 
 test: $(COMPDB) $(TESTS)
@@ -77,6 +82,8 @@ test-all:
 	$(MAKE) DEBUG=1 BUILD=$(BUILD)/debug test
 
 bench: $(COMPDB) $(BENCHES)
+
+examples: $(COMPDB) $(EXAMPLES)
 
 clean:
 	rm -rf $(BUILD) $(COMPDB)
