@@ -90,6 +90,8 @@ static void copies() {
   MetricSkipList<L2<2>> A(pts, 2, L2<2>(), 9);
   A.build_sequential(false);
   A = S;  // copy-assignment over a built structure
+  MetricSkipList<L2<2>>& alias = A;
+  A = alias;  // self-assignment must not read the slab it drops
   MetricSkipList<L2<2>> M = std::move(C);
   bool same = true;
   for (idx_t i = 0; same && i < S.n(); i++)

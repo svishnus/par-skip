@@ -74,6 +74,14 @@ class MetricSkipList {
     init(std::move(pts));
   }
 
+  // Copies own their lists (see Slab); assignment goes through a copy so
+  // that the source's buffers are read before the destination's slab is
+  // dropped, self-assignment included.
+  MetricSkipList(const MetricSkipList&) = default;
+  MetricSkipList(MetricSkipList&&) noexcept = default;
+  MetricSkipList& operator=(const MetricSkipList& o) { return *this = MetricSkipList(o); }
+  MetricSkipList& operator=(MetricSkipList&&) noexcept = default;
+
   // Builds the structure; the same as build_parallel(). Rebuilding is
   // allowed and replaces the previous structure.
   void build() { build_parallel(); }
@@ -195,16 +203,15 @@ class MetricSkipList {
   parlay::sequence<point_type> pts_;   // in permutation order
   // The initial buffers of all lists (reset()), declared before lists_ so
   // that it outlives them. A copy of the structure gives every FingerLists
-  // a buffer of its own, so the slab is not copied.
+  // a buffer of its own, so the slab is not copied (and a copy-assigned
+  // structure, which is move-assigned from a copy, drops its old slab
+  // together with the lists that pointed into it).
   struct Slab {
     parlay::sequence<std::byte> mem;
     Slab() = default;
     Slab(const Slab&) {}
     Slab(Slab&&) noexcept = default;
-    Slab& operator=(const Slab&) {
-      mem = parlay::sequence<std::byte>();
-      return *this;
-    }
+    Slab& operator=(const Slab&) = delete;
     Slab& operator=(Slab&&) noexcept = default;
   } slab_;
   parlay::sequence<FingerLists> lists_;

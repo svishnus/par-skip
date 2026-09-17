@@ -423,8 +423,8 @@ struct FingerLists {
   // Room for `lists` stored lists (the tail's radii are always included)
   // before the buffer has to grow.
   void reserve(size_t lists) {
-    const idx_t want = static_cast<idx_t>(std::min<size_t>(std::max<size_t>(lists, 1), idx_t{1} << 28));
-    if (want > cap_) reallocate(want);
+    const idx_t want = static_cast<idx_t>(std::min<size_t>(std::max<size_t>(lists, 1), std::numeric_limits<idx_t>::max()));
+    if (want > cap_) reallocate(want);  // throws std::length_error past the 32-bit layout
   }
   // Bytes a buffer for `lists` stored lists needs (see layout).
   size_t bytes_for(idx_t lists) const { return layout(lists).bytes; }
@@ -476,6 +476,7 @@ struct FingerLists {
     };
     if (n_lists_ == 0) return fail("no lists", 0);
     if (stride < 1 || alpha < 1 || alpha > kMaxAlpha) return fail("alpha or stride", 0);
+    if (base_size_ > alpha) return fail("base size", 0);
     if (n_complete_ > 0 ? (base_size_ != alpha || n_lists_ != n_complete_ + alpha) : n_lists_ != base_size_ + 1u)
       return fail("tail shape", 0);
     if (cap_ < stored() || n_lists_ > cap_ + alpha) return fail("capacity", 0);
@@ -575,6 +576,10 @@ struct FingerLists {
 
   // Section offsets are 32-bit: a point may hold about 2^27 lists, which
   // only an adversarial permutation approaches (docs/PLAN.md section 7).
+  // The exception propagates cleanly out of the sequential build; inside
+  // the parallel build it crosses ParlayLib's scheduler, which does not
+  // support exceptions, so there it ends the program instead of silently
+  // overflowing.
   void allocate(idx_t c) {
     const Layout L = layout(c);
     if (L.bytes > std::numeric_limits<uint32_t>::max()) throw std::length_error("mskip: too many lists for one point");
