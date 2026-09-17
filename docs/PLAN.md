@@ -41,8 +41,8 @@ structures, which is the main correctness test.
    `alpha >= 1`; the paper's `16c^3` is only for the running-time analysis.
 8. **Determinism.** Given the same permutation, `build_sequential()`,
    `build_parallel()` (any thread count, `PARLAY_SEQUENTIAL` or not) and the
-   reference builder must produce identical `radius`, `size`, `entries`
-   (and `adv`). Distances are always evaluated as `metric(owner or query,
+   reference builder must produce identical radii, lists (and stored
+   advance pointers). Distances are always evaluated as `metric(owner or query,
    other)`, so a metric only has to be exactly symmetric if it is used that
    way.
 9. **Rounding slack.** The exactness argument of the walk needs the triangle
@@ -126,8 +126,13 @@ corrects it (measured: 2.5 → 3.8 focus moves per step at α = 4, stride 8).
 The alternative, only the evictor's pointer per list, would need each
 checkpoint entry's birth list (4 bytes, the same as a pointer) and give
 older hints, so it is dominated. Default `stride = max(α, 8)`, capped at
-257 − α so the killed slot fits a byte; `MetricSkipList::set_checkpoint_stride`
-tunes it.
+257 − α so the killed slot fits a byte (above α = 128 the checkpoints
+therefore recur more often and the bound degrades towards the old one; α
+that large is outside the useful range); `MetricSkipList::set_checkpoint_stride`
+tunes it. The walk materializes the whole focus list although it usually
+stops at the first qualifying entry; at α ≤ 16 that is ~100 bytes of stack
+writes per step and invisible, at α = 255 it is 3 KB — a lazy iteration
+over the live slots would fix it if such α ever mattered.
 
 Buffers: the structure reserves one slab for all points, each point getting
 room for its expected number of stored lists plus two standard deviations
@@ -284,7 +289,7 @@ reference_lists(S, i):
 O(n·alpha) per point → O(n²·alpha) total; used on n ≤ ~2000.
 
 Semantic checker: for random `r` (and `r` = each radius, and `r` just below
-each radius): `F_i.list(F_i.locate(r))` == the `alpha` smallest-index points in
+each radius): `F_i.materialize(F_i.locate(r))` == the `alpha` smallest-index points in
 `{ j > i : d(i,j) <= r }` (brute force). This is exact even with ties (rule 4).
 
 ---
@@ -409,8 +414,9 @@ After the last layer of the merge, `fixup(i)` runs in parallel over
 `i ∈ [l, m]`: each pending slot is re-`align`ed (from the same target's most
 recent earlier stored pointer when there is one — the push-down: for an
 entry of a checkpoint list that is its evictor slot within the block, or its
-slot in the previous checkpoint, `FingerLists::prev_slot` — so a chain of
-deferred copies costs O(distance + length), not O(distance × length)); slots
+slot in the previous checkpoint, `FingerLists::prev_slot`, a scan of at
+most `stride + α` entries — so a chain of deferred copies costs
+O(distance + length), not O(distance × length)); slots
 that resolve to a complete list, or any slot when `r == n-1`, leave the
 pending list. Pending slots stay in creation (= slot) order, so the earlier
 pointer has been fixed when a slot is reached. Since Phase 5 only checkpoint
@@ -441,7 +447,7 @@ argument of Alg. 6 is unchanged.
 | `test_build_par` | parallel == sequential, exactly; n up to 10⁵; also under `PARLAY_NUM_THREADS=1`, `SEQ=1`, and `DEBUG=1` (ASan/UBSan); records control-forest depth |
 | `test_stats` | lists per point vs α·H_n, walk length vs log n (sanity, loose bounds) |
 | `test_adversarial` | explicit (non-random) permutations: every point an evictor of `s_0`, sorted input without evictors, exponential gaps giving a control forest of depth n/α; all builders agree and queries stay exact |
-| `test_layout` | the compact storage: structure independent of the checkpoint stride, all builders bit-identical (pointers included) at strides 1, 2, α, 2α and the maximum, rebuilds across strides, the stride limit, memory ≤ 30 bytes per list + 20α per point, ~1 % of the points grow past their slab slice |
+| `test_layout` | the compact storage: structure independent of the checkpoint stride, all builders bit-identical (pointers included) at strides 1, 2, α, 2α and the maximum (α up to 255, and the 64-slot boundary of the live mask), rebuilds across strides, the stride limit, copies and moves of a built structure, memory ≤ 30 bytes per list + 20α per point, ~1 % of the points grow past their slab slice |
 
 Advance pointers are checked by definition (`check_advance`: every pointer of
 every complete list equals `F_j.locate(radius)`, none pending) after the

@@ -32,6 +32,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -84,16 +86,19 @@ struct ListBuf {
 // the empty list of radius 0. List 0 may itself be a tail list (base_size <
 // alpha) when s_i has fewer than alpha successors.
 struct FingerLists {
-  idx_t alpha = 0;
-  idx_t stride = 0;      // lists 0, stride, 2 stride, ... are stored in full
+  idx_t alpha = 1;
+  idx_t stride = 1;      // lists 0, stride, 2 stride, ... are stored in full
   bool has_adv = false;  // advance pointers are maintained (Alg. 4/5)
 
-  FingerLists() = default;
+  FingerLists() = default;  // alpha 1, no lists
   explicit FingerLists(idx_t a, bool with_adv = false, idx_t checkpoint_stride = 0)
       : alpha(a), stride(checkpoint_stride ? checkpoint_stride : default_stride(a)), has_adv(with_adv) {
     assert(a >= 1 && a <= kMaxAlpha && stride >= 1 && stride <= max_stride(a));
   }
   // A delta names the slot it kills in one byte: alpha + stride - 1 <= 256.
+  // (So above alpha = 128 the checkpoints recur every 257 - alpha lists and
+  // the storage is no longer Θ(alpha ln n) per point; alpha that large is
+  // outside the useful range anyway.)
   static idx_t max_stride(idx_t a) { return 257 - a; }
   // A copy owns its buffer, whether or not the original did.
   FingerLists(const FingerLists& o)
@@ -285,7 +290,7 @@ struct FingerLists {
         live[dead[t] / 64] &= ~(uint64_t{1} << (dead[t] % 64));
         live[(alpha + t) / 64] |= uint64_t{1} << ((alpha + t) % 64);
       }
-      for (idx_t word = 0; word < 4; word++)
+      for (idx_t word = 0, words = static_cast<idx_t>((block_slots() + 63) / 64); word < words; word++)
         for (uint64_t x = live[word]; x; x &= x - 1) {
           const idx_t s = static_cast<idx_t>(word * 64 + __builtin_ctzll(x));
           L.ent[w] = s < alpha ? ck[s] : ev[s - alpha];
@@ -393,7 +398,7 @@ struct FingerLists {
       push_first(nullptr, 0);
       return;
     }
-    assert(n_lists_ == stored() && "tail already built");
+    if (n_lists_ > stored()) return;  // already built
     const idx_t last = n_lists_ - 1;
     ListBuf L;
     materialize<true>(last, L);
@@ -418,7 +423,7 @@ struct FingerLists {
   // Room for `lists` stored lists (the tail's radii are always included)
   // before the buffer has to grow.
   void reserve(size_t lists) {
-    const idx_t want = static_cast<idx_t>(std::min<size_t>(std::max<size_t>(lists, 1), idx_t{1} << 30));
+    const idx_t want = static_cast<idx_t>(std::min<size_t>(std::max<size_t>(lists, 1), idx_t{1} << 28));
     if (want > cap_) reallocate(want);
   }
   // Bytes a buffer for `lists` stored lists needs (see layout).
@@ -451,7 +456,8 @@ struct FingerLists {
     const idx_t s = stored();
     if (s == 0) return 0;
     return sizeof(dist_t) * n_lists_ + (sizeof(Entry) + 1) * (s - 1) + sizeof(Entry) * blocks(s, stride) * alpha +
-           (has_adv ? sizeof(idx_t) * adv_slots(s) : 0) + (n_lists_ > s ? (sizeof(Entry) + sizeof(idx_t) + 1) * alpha : 0);
+           (has_adv ? sizeof(idx_t) * adv_slots(s) : 0) +
+           (n_lists_ > s ? (sizeof(Entry) + sizeof(idx_t) + 1) * tail_size() : 0);
   }
   size_t bytes() const { return cap_ == 0 ? 0 : layout(cap_).bytes; }
   idx_t capacity() const { return cap_; }
@@ -472,7 +478,7 @@ struct FingerLists {
     if (stride < 1 || alpha < 1 || alpha > kMaxAlpha) return fail("alpha or stride", 0);
     if (n_complete_ > 0 ? (base_size_ != alpha || n_lists_ != n_complete_ + alpha) : n_lists_ != base_size_ + 1u)
       return fail("tail shape", 0);
-    if (cap_ < stored()) return fail("capacity", 0);
+    if (cap_ < stored() || n_lists_ > cap_ + alpha) return fail("capacity", 0);
     ListBuf R, L;  // R: replayed delta by delta from list 0; L: as materialized
     for (idx_t k = 0; k < n_lists_; k++) {
       if (k == 0) {
@@ -564,9 +570,14 @@ struct FingerLists {
     return reinterpret_cast<uint8_t*>(buf_ + tail_off_ + (sizeof(Entry) + sizeof(idx_t)) * alpha);
   }
   uint8_t* tail_rank_ptr() const { return evicted_ptr() + cap_; }
+  // Entries of the tail base: the last stored list's.
+  idx_t tail_size() const { return n_complete_ > 0 ? alpha : base_size_; }
 
+  // Section offsets are 32-bit: a point may hold about 2^27 lists, which
+  // only an adversarial permutation approaches (docs/PLAN.md section 7).
   void allocate(idx_t c) {
     const Layout L = layout(c);
+    if (L.bytes > std::numeric_limits<uint32_t>::max()) throw std::length_error("mskip: too many lists for one point");
     buf_ = parlay::allocator<std::byte>().allocate(L.bytes);
     owned_ = true;
     cap_ = c;
@@ -595,9 +606,9 @@ struct FingerLists {
       std::copy_n(ckpt_ptr(), static_cast<size_t>(blocks(s, stride)) * alpha, o.ckpt_ptr());
       if (has_adv) std::copy_n(adv_ptr(), adv_slots(s), o.adv_ptr());
       if (n_lists_ > s) {
-        std::copy_n(tail_ent_ptr(), alpha, o.tail_ent_ptr());
-        std::copy_n(tail_src_ptr(), alpha, o.tail_src_ptr());
-        std::copy_n(tail_rank_ptr(), alpha, o.tail_rank_ptr());
+        std::copy_n(tail_ent_ptr(), tail_size(), o.tail_ent_ptr());
+        std::copy_n(tail_src_ptr(), tail_size(), o.tail_src_ptr());
+        std::copy_n(tail_rank_ptr(), tail_size(), o.tail_rank_ptr());
       }
     }
     o.n_complete_ = n_complete_;

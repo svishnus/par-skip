@@ -69,7 +69,7 @@ build has finished. Errors are exceptions: `std::invalid_argument` for a bad
 **Choosing alpha.** Each point keeps, for every radius, the `alpha`
 highest-priority points inside that radius. Bigger `alpha` means shorter
 walks but more lists per point: about 21 bytes per list plus a full copy
-every `stride` lists, i.e. Θ(α ln n) per point — about 1.1 KB at
+every `stride` lists, i.e. Θ(α ln n) per point for `alpha` up to 128 — about 1.1 KB at
 `alpha = 4` and 2.2 KB at `alpha = 8` for 10⁶ / 2·10⁵ points (the resident
 set is ≈ 1.6× that during the build; `build_parallel(seq_base, false)`
 drops the pointers and saves a further quarter). 4–8 is a good range for

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
 
 #include "check.hpp"
 #include "mskip/data.hpp"
@@ -23,12 +24,12 @@ static bool same_structure(const MetricSkipList<Metric>& a, const MetricSkipList
 
 template <class Metric>
 static void strides(const char* name, const parlay::sequence<typename Metric::point_type>& pts, idx_t alpha,
-                    uint64_t seed) {
+                    uint64_t seed, idx_t extra_stride = 0) {
   MetricSkipList<Metric> ref(pts, alpha, Metric(), seed);  // default stride
   ref.build_sequential(true);
   const idx_t max_stride = FingerLists::max_stride(alpha);
-  for (idx_t stride : {idx_t(1), idx_t(2), alpha, idx_t(2 * alpha), max_stride}) {
-    if (stride > max_stride) continue;
+  for (idx_t stride : {idx_t(1), idx_t(2), alpha, idx_t(2 * alpha), max_stride, extra_stride}) {
+    if (stride == 0 || stride > max_stride) continue;
     char what[128];
     std::snprintf(what, sizeof what, "%s alpha=%u n=%u stride=%u", name, alpha, ref.n(), stride);
     MetricSkipList<Metric> seq(pts, alpha, Metric(), seed);
@@ -72,6 +73,38 @@ static void limits() {
   CHECK(threw);
   CHECK(FingerLists::max_stride(255) == 2 && FingerLists::default_stride(255) == 2);
   CHECK(FingerLists::default_stride(4) >= 4 && FingerLists::default_stride(200) == 57);
+  FingerLists empty;  // default-constructed: no lists, usable
+  CHECK(empty.num_lists() == 0 && empty.bytes() == 0 && empty.logical_bytes() == 0);
+  empty.build_tail();
+  CHECK(empty.num_lists() == 1 && empty.size(0) == 0 && empty.validate(0).empty());
+}
+
+// Copies and moves of a built structure answer queries like the original;
+// build_tail is idempotent and reserve keeps a built list intact.
+static void copies() {
+  auto pts = data::uniform<2>(2000, 5);
+  auto qs = data::uniform<2>(50, 6);
+  MetricSkipList<L2<2>> S(pts, 4, L2<2>(), 5);
+  S.build_parallel(7, true);
+  MetricSkipList<L2<2>> C = S;  // every list now owns its buffer
+  MetricSkipList<L2<2>> A(pts, 2, L2<2>(), 9);
+  A.build_sequential(false);
+  A = S;  // copy-assignment over a built structure
+  MetricSkipList<L2<2>> M = std::move(C);
+  bool same = true;
+  for (idx_t i = 0; same && i < S.n(); i++)
+    same = same_lists(S.lists(i), M.lists(i), true) && same_lists(S.lists(i), A.lists(i), true) && M.lists(i).owns_buffer();
+  CHECK_CTX(same, "copies differ from the original");
+  for (const auto& q : qs) CHECK(S.knn(q, 5) == M.knn(q, 5) && S.knn(q, 5) == A.knn(q, 5));
+  CHECK(check::check_advance(A, "copy") && check::check_advance(M, "move"));
+  A.build_parallel(0, true);  // a rebuild of a copy reserves a slab of its own
+  CHECK(check::matches_reference(A, "rebuilt copy"));
+  FingerLists F = S.lists(0);
+  const idx_t lists = F.num_lists();
+  F.build_tail();
+  CHECK(F.num_lists() == lists);
+  F.reserve(4 * F.capacity());
+  CHECK(F.num_lists() == lists && same_lists(F, S.lists(0), true) && F.validate(0).empty());
 }
 
 // Θ(alpha ln n) per point: at most ~30 bytes per list plus the tail base,
@@ -89,7 +122,8 @@ static void memory(const char* name, const parlay::sequence<typename Metric::poi
     allocated += F.bytes();
     CHECK_CTX(F.logical_bytes() <= F.bytes(), "%s: F_%u logical %zu > allocated %zu", name, i, F.logical_bytes(), F.bytes());
   }
-  CHECK(logical == S.memory_bytes() && allocated == S.allocated_bytes());
+  // allocated_bytes counts the whole slab, abandoned slices included
+  CHECK(logical == S.memory_bytes() && allocated <= S.allocated_bytes() && S.allocated_bytes() < 1.1 * allocated);
   const double per_point = double(logical) / S.n();
   const double bound = 30.0 * lists / S.n() + 20.0 * alpha;
   CHECK_CTX(per_point <= bound, "%s alpha=%u: %.0f bytes per point, bound %.0f", name, alpha, per_point, bound);
@@ -111,6 +145,12 @@ int main() {
   }
   strides<L2<2>>("alpha 255", data::uniform<2>(400, 21), 255, 21);
   strides<L2<2>>("alpha 60", data::uniform<2>(500, 22), 60, 22);
+  // the 64-slot boundary of the live mask: block slots 64 (alpha 63/stride 2, 64/1, 33/32) and 65 (65/1)
+  strides<L2<2>>("alpha 63", data::uniform<2>(300, 23), 63, 23);
+  strides<L2<2>>("alpha 64", data::uniform<2>(300, 24), 64, 24);
+  strides<L2<2>>("alpha 65", data::uniform<2>(300, 25), 65, 25);
+  strides<L2<2>>("alpha 33", data::uniform<2>(300, 26), 33, 26, 32);
+  copies();
   for (idx_t alpha : {2u, 4u, 8u, 16u}) {
     memory<L2<2>>("uniform L2 2D", data::uniform<2>(100000, 1), alpha);
     memory<L2<3>>("clusters L2 3D", data::gaussian_clusters<3>(50000, 10, 0.02, 2), alpha);

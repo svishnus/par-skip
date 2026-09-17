@@ -139,8 +139,10 @@ class MetricSkipList {
   size_t memory_bytes() const {
     return parlay::reduce(parlay::delayed_tabulate(n_, [&](size_t i) { return lists_[i].logical_bytes(); }));
   }
-  size_t allocated_bytes() const {
-    return parlay::reduce(parlay::delayed_tabulate(n_, [&](size_t i) { return lists_[i].bytes(); }));
+  size_t allocated_bytes() const {  // the slab (abandoned slices included) plus the buffers of points that grew
+    return slab_.mem.size() + parlay::reduce(parlay::delayed_tabulate(n_, [&](size_t i) {
+             return lists_[i].owns_buffer() ? lists_[i].bytes() : size_t{0};
+           }));
   }
 
  private:
@@ -191,17 +193,21 @@ class MetricSkipList {
   idx_t stride_ = 0;                   // checkpoint stride of every FingerLists
   parlay::sequence<idx_t> perm_;       // perm_[i] = original index of s_i
   parlay::sequence<point_type> pts_;   // in permutation order
-  parlay::sequence<FingerLists> lists_;
-  // The initial buffers of all lists (reset()). A copy of the structure
-  // gives every FingerLists a buffer of its own, so the slab is not copied.
+  // The initial buffers of all lists (reset()), declared before lists_ so
+  // that it outlives them. A copy of the structure gives every FingerLists
+  // a buffer of its own, so the slab is not copied.
   struct Slab {
     parlay::sequence<std::byte> mem;
     Slab() = default;
     Slab(const Slab&) {}
     Slab(Slab&&) noexcept = default;
-    Slab& operator=(const Slab&) { return *this; }
+    Slab& operator=(const Slab&) {
+      mem = parlay::sequence<std::byte>();
+      return *this;
+    }
     Slab& operator=(Slab&&) noexcept = default;
   } slab_;
+  parlay::sequence<FingerLists> lists_;
   parlay::sequence<idx_t> control_, control_list_;
   bool built_ = false;
   bool advance_ = false;
